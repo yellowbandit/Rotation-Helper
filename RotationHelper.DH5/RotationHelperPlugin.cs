@@ -1005,6 +1005,8 @@ public class ImGuiConfigWindow
 
 	private bool _scannedOnOpen;
 
+	private bool _closeRequested;
+
 	private static readonly string[] KeyOptions = new string[56]
 	{
 		"None", "L.Mouse", "R.Mouse", "Cancel", "M.Mouse", "X1.Mouse", "X2.Mouse", "Backspace", "Tab", "Enter",
@@ -1074,6 +1076,11 @@ public class ImGuiConfigWindow
 			}
 		}
 		ImGuiNET.ImGui.End();
+		if (_closeRequested)
+		{
+			_closeRequested = false;
+			open = false;
+		}
 		_plugin._showConfigWindow = open;
 		_plugin.WindowVisible = open;
 		if (!open)
@@ -1092,8 +1099,7 @@ public class ImGuiConfigWindow
 		if (ImGuiNET.ImGui.Button("Save & Close"))
 		{
 			SaveAll();
-			_plugin._showConfigWindow = false;
-			_plugin.WindowVisible = false;
+			_closeRequested = true;
 		}
 		if (!string.IsNullOrEmpty(_statusMessage))
 		{
@@ -1298,9 +1304,13 @@ public class ImGuiConfigWindow
 				}
 				ImGuiNET.ImGui.TableNextColumn();
 				bool selected = (i == _rotSelectedIndex);
-				if (ImGuiNET.ImGui.Selectable($"[{ability.KeyLabel}] {ability.Name}##sel", selected, ImGuiNET.ImGuiSelectableFlags.SpanAllColumns | ImGuiNET.ImGuiSelectableFlags.AllowOverlap))
+				if (ImGuiNET.ImGui.Selectable($"{ability.Name}##sel", selected, ImGuiNET.ImGuiSelectableFlags.SpanAllColumns | ImGuiNET.ImGuiSelectableFlags.AllowOverlap))
 				{
 					_rotSelectedIndex = i;
+				}
+				if (ImGuiNET.ImGui.IsItemHovered())
+				{
+					ImGuiNET.ImGui.SetTooltip($"[{ability.KeyLabel}] {ability.Name}");
 				}
 				ImGuiNET.ImGui.TableNextColumn();
 				if (manualCd)
