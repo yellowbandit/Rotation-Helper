@@ -1982,17 +1982,16 @@ public class ImGuiConfigWindow
 		_loadProfiles.Clear();
 		try
 		{
-			string path = _plugin.GetProfileDir();
-			if (string.IsNullOrEmpty(path))
+			string accountDir = _plugin.GetAccountDir();
+			if (Directory.Exists(accountDir))
 			{
-				path = Path.Combine(_plugin._pluginFolder, "Character profiles");
-			}
-			if (Directory.Exists(path))
-			{
-				foreach (string file in Directory.GetFiles(path, "*-rotation.json"))
+				foreach (string directory in Directory.GetDirectories(accountDir))
 				{
-					string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(file);
-					_loadProfiles.Add(fileNameWithoutExtension.Substring(0, fileNameWithoutExtension.Length - "-rotation".Length));
+					string name = Path.GetFileName(directory);
+					if (Directory.GetFiles(directory, "*-rotation.json").Length != 0)
+					{
+						_loadProfiles.Add(name);
+					}
 				}
 			}
 			if (_loadProfiles.Count == 0)
@@ -2000,12 +1999,13 @@ public class ImGuiConfigWindow
 				string legacy = Path.Combine(_plugin._pluginFolder, "Character profiles");
 				if (Directory.Exists(legacy))
 				{
-					foreach (string directory in Directory.GetDirectories(legacy))
+					foreach (string directory2 in Directory.GetDirectories(legacy))
 					{
-						_loadProfiles.Add(Path.GetFileName(directory));
+						_loadProfiles.Add(Path.GetFileName(directory2));
 					}
 				}
 			}
+			_loadProfiles.Sort();
 		}
 		catch
 		{
@@ -2024,29 +2024,32 @@ public class ImGuiConfigWindow
 			{
 				WriteIndented = true
 			};
-			string path = _plugin.GetProfileDir();
-			if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
+			string path = Path.Combine(_plugin.GetAccountDir(), _loadProfileSelection);
+			if (Directory.Exists(path))
 			{
-				string text = Path.Combine(path, _loadProfileSelection + "-rotation.json");
-				if (File.Exists(text))
+				string[] rotationFiles = Directory.GetFiles(path, "*-rotation.json");
+				if (rotationFiles.Length != 0)
 				{
+					string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(rotationFiles[0]);
+					string stem = fileNameWithoutExtension.Substring(0, fileNameWithoutExtension.Length - "-rotation".Length);
+					string text = Path.Combine(path, stem + "-rotation.json");
 					_plugin.Rotation = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text), options) ?? new List<RotationAbility>();
-					string text2 = Path.Combine(path, _loadProfileSelection + "-bufforder.json");
+					string text2 = Path.Combine(path, stem + "-bufforder.json");
 					if (File.Exists(text2))
 					{
 						_plugin.BuffOrder = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text2), options) ?? new List<RotationAbility>();
 					}
-					string text3 = Path.Combine(path, _loadProfileSelection + "-emergency.json");
+					string text3 = Path.Combine(path, stem + "-emergency.json");
 					if (File.Exists(text3))
 					{
 						_plugin.Emergency = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text3), options) ?? new List<RotationAbility>();
 					}
-					string text4 = Path.Combine(path, _loadProfileSelection + "-toggles.json");
+					string text4 = Path.Combine(path, stem + "-toggles.json");
 					if (File.Exists(text4))
 					{
 						_plugin.ToggleBuffs = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text4), options) ?? new List<RotationAbility>();
 					}
-					string text5 = Path.Combine(path, _loadProfileSelection + "-settings.json");
+					string text5 = Path.Combine(path, stem + "-settings.json");
 					if (File.Exists(text5))
 					{
 						RotationConfig rotationConfig = JsonSerializer.Deserialize<RotationConfig>(File.ReadAllText(text5), options);
@@ -6479,6 +6482,11 @@ catch { }
 		{
 		}
 		return "Unknown";
+	}
+
+	internal string GetAccountDir()
+	{
+		return Path.Combine(ProfileRoot, GetServerFolderName(), GetAccountFolderName());
 	}
 
 	internal string GetProfileDir()
