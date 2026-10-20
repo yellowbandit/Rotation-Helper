@@ -1,0 +1,50 @@
+{
+  "toggle_state_properties": {
+    "0x10001D2D": "Combat_Player_m_bAutoAttack (1=ON, 0=OFF)",
+    "0x10001D4C": "Power Attack toggle state (discovered via API on 0x79000355)",
+    "0x10001D50": "Combat Expertise toggle state (discovered via API on 0x79000355)"
+  },
+  "pattern_lookups": {
+    "property_on_action": {
+      "did": "0x10001D47",
+      "name": "Action_Action_m_eTogglePropertyName",
+      "description": "On any ability's DbProperties entry, this UInt32 property points to the runtime InstanceProperty that tracks the toggle ON/OFF state"
+    },
+    "is_toggle_flag": {
+      "did": "0x10001AE5",
+      "name": "Action_Action_m_bIsToggle",
+      "description": "Byte flag on an ability's DbProperties entry: 0x01 = this ability IS a toggle, 0x00 = not a toggle"
+    }
+  },
+  "known_ability_db_property_ids": {
+    "Attack": "0x79000353",
+    "Power Attack": "0x79000355",
+    "Combat Expertise": "0x79000355",
+    "Precise Shot": "0x79000353",
+    "Rapid Shot": "0x79000102",
+    "Point Blank Shot": "0x79000353",
+    "Improved Precise Shot": "0x790063FF",
+    "Defensive Stance": "0x7900CCE1",
+    "Ranged Power Attack": "0x79000560"
+  },
+  "cooldown_timer_dids": {
+    "Feat_AutoAttack_Agent_m_ttCooldownTimer": "0x1000230B",
+    "Action_Action_m_eCooldownTimer1": "0x10001DCA (value on ability = the DID of the timer property)",
+    "Action_Action_m_eCooldownTimer2": "0x10001DC6 (value = timer property DID)",
+    "Action_Action_m_eCooldownTimer3": "0x10001DC7 (value = timer property DID)"
+  },
+  "api_endpoints": {
+    "search_by_name": "GET http://localhost:5138/DbProperties/IdsForName?name=<name>",
+    "search_by_words": "POST http://localhost:5138/DbProperties/Search with JSON body {\"words\":[\"word1\",\"word2\"],\"maxResults\":10}",
+    "get_by_id": "GET http://localhost:5138/DbProperties/<hex_id>",
+    "enhancement_trees": "GET http://localhost:5138/DbProperties/EnhancementTrees",
+    "weeney_type": "GET http://localhost:5138/DbProperties/ByWeenieType/<type>"
+  },
+  "how_to_discover_a_toggle_property": {
+    "step_1": "Search the API by name to find the ability's DbProperties ID: GET /DbProperties/IdsForName?name=MyToggle",
+    "step_2": "Get the ability definition: GET /DbProperties/0x79XXXXXX",
+    "step_3": "Look for property with ID 0x10001D47 (Action_Action_m_eTogglePropertyName) - its value is the toggle state property DID",
+    "step_4": "Use that DID in the plugin's ToggleStatePropertyDid field",
+    "note": "Toggle state properties are Byte type. Value 1 = ON, Value 0 = OFF"
+  }
+}

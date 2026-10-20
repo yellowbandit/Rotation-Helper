@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="VoK.Sdk">
+      <HintPath>..\RotationHelper\bin\Debug\net8.0-windows\VoK.Sdk.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

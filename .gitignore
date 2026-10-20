@@ -1,0 +1,34 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# Signing secrets (private key, cert, password artifacts) — NEVER commit
+signing/
+*.pfx
+*.key
+*.pem
+*.crt
+*.der
+*.snk
+
+# SDK / third-party binaries
+lib/
+*.dll
+!*.dll.config
+
+# IDE / user
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Local machine config / logs
+*.log
+logs/
+
+# Python venv / outputs (TypeInspector has a Python tool)
+# (none tracked currently)
+
+# Temp
+*.tmp
+~$*

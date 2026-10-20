@@ -1,0 +1,13 @@
+{
+    "PluginName": "RotationHelper",
+    "ProductInfoUrl": null,
+    "UpdateSource": null,
+    "CurrentVersion": "1.0.0",
+    "AllowedVersions": [
+        {
+            "Version": "1.0.0.0",
+            "Url": null,
+            "Checksum": null
+        }
+    ]
+}
