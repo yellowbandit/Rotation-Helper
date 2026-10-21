@@ -4377,12 +4377,7 @@ catch { }
 		{
 			RefreshAbilityTimerDids(ability);
 		}
-		long entityCd = GetEntityCooldownMs(ability);
-		if (entityCd > 0)
-		{
-			return true;
-		}
-		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < ability.CooldownMs)
+		if ((ability.CooldownTimerDid1 != 0 || ability.CooldownTimerDid2 != 0 || ability.CooldownTimerDid3 != 0) && GetEntityCooldownMs(ability) > 0)
 		{
 			return true;
 		}
@@ -4391,16 +4386,6 @@ catch { }
 
 	private long GetEntityCooldownMs(RotationAbility ability)
 	{
-		long timeBasedMs = 0L;
-		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime))
-		{
-			timeBasedMs = ability.CooldownMs - (long)(DateTime.UtcNow - ability.LastFired).TotalMilliseconds;
-			if (timeBasedMs < 0L) timeBasedMs = 0L;
-		}
-		if (timeBasedMs > 0L)
-		{
-			return timeBasedMs;
-		}
 		uint valueOrDefault = ability.ReferenceDid.GetValueOrDefault();
 		double num = double.NaN;
 		if (valueOrDefault != 0)
@@ -4413,8 +4398,7 @@ catch { }
 					double num2 = value.Item1 - totalSeconds;
 					if (num2 > 0.0)
 					{
-						long cachedMs = (long)(num2 * 1000.0);
-						return cachedMs > timeBasedMs ? cachedMs : timeBasedMs;
+						return (long)(num2 * 1000.0);
 					}
 					num = value.Item3;
 					_cooldownCache.Remove(valueOrDefault);
@@ -4456,7 +4440,7 @@ catch { }
 			if (!double.IsNaN(num) && Math.Abs(num3 - num) < 0.01)
 			{
 				Log($"COOLDOWN [{ability.Name}] gameTime stale (still {num3:F1}) — expired, ready");
-				return timeBasedMs;
+				return 0L;
 			}
 			uint[] array = new uint[3] { ability.CooldownTimerDid1, ability.CooldownTimerDid2, ability.CooldownTimerDid3 };
 			uint[] array2 = array;
@@ -4489,7 +4473,7 @@ catch { }
 					{
 						_cooldownCache[valueOrDefault] = (num6, DateTime.UtcNow, num3);
 					}
-					return result > timeBasedMs ? result : timeBasedMs;
+					return result;
 				}
 				else
 				{
@@ -4501,7 +4485,7 @@ catch { }
 		{
 			Log("GetEntityCooldownMs error: " + ex.Message);
 		}
-		return timeBasedMs;
+		return 0L;
 	}
 
 	internal long GetRemainingCooldownMs(RotationAbility ability)
@@ -5834,16 +5818,11 @@ catch { }
 						list.Add(rotationAbility5);
 					}
 				}
-				IEnumerable<RotationAbility> fireOrder = _config.SmartOrder
-					? list.OrderByDescending(a => a.Priority).ThenByDescending(a => (utcNow - a.LastFired).TotalMilliseconds)
-					: list.OrderBy(a => a.LastFired);
-				foreach (RotationAbility rotationAbility6 in fireOrder)
+				RotationAbility rotationAbility6 = (_config.SmartOrder ? PickBestAbility(list) : list.OrderBy(a => a.LastFired).FirstOrDefault());
+				if (rotationAbility6 != null && FireAbility(rotationAbility6, skipCooldown: true))
 				{
-					if (FireAbility(rotationAbility6, skipCooldown: true))
-					{
-						rotationAbility6.LastFired = utcNow;
-						Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name + (_config.SmartOrder ? " (smart)" : ""));
-					}
+					rotationAbility6.LastFired = utcNow;
+					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name + (_config.SmartOrder ? " (smart)" : ""));
 				}
 			}
 			goto IL_1bed;
