@@ -4373,15 +4373,16 @@ catch { }
 		{
 			return false;
 		}
-		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime))
-		{
-			return (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < ability.CooldownMs;
-		}
 		if (ability.CooldownTimerDid1 == 0 && ability.CooldownTimerDid2 == 0 && ability.CooldownTimerDid3 == 0)
 		{
 			RefreshAbilityTimerDids(ability);
 		}
-		if ((ability.CooldownTimerDid1 != 0 || ability.CooldownTimerDid2 != 0 || ability.CooldownTimerDid3 != 0) && GetEntityCooldownMs(ability) > 0)
+		long entityCd = GetEntityCooldownMs(ability);
+		if (entityCd > 0)
+		{
+			return true;
+		}
+		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < ability.CooldownMs)
 		{
 			return true;
 		}
