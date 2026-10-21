@@ -580,6 +580,7 @@ public class BuffManager : IDisposable
 	{
 		try
 		{
+			System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "hudentry.log"), $"[{DateTime.Now:HH:mm:ss.fff}] GetBuffRemaining entry name={buff.Name} gdppNull={_gameDataProvider==null} activeEffects={_activeEffects.Count}\r\n");
 			uint num = buff.EffectDid ?? buff.ActionDid;
 			if (num == 0)
 			{
@@ -625,8 +626,9 @@ public class BuffManager : IDisposable
 					}
 				}
 			}
-			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
-			try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug call from {buff.Name} num=0x{num:X8}\r\n"); } catch (Exception e) { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug_err.log"), $"{e}\r\n"); }
+			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = null;
+			try { readOnlyDictionary = _gameDataProvider?.GetActiveEffects(); } catch (Exception ex) { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] GetActiveEffects THREW: {ex}\r\n"); }
+			System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug call from {buff.Name} num=0x{num:X8} dictNull={readOnlyDictionary==null} dictCount={(readOnlyDictionary==null?0:readOnlyDictionary.Count)}\r\n");
 			if (readOnlyDictionary != null && readOnlyDictionary.Count > 0)
 			{
 				foreach (KeyValuePair<int, IActiveEffect> item in readOnlyDictionary)
@@ -673,11 +675,11 @@ public class BuffManager : IDisposable
 							string effText = RotationHelperPlugin.ExtractTextFromProps(nameProps, (uint)nameItem.Value.EffectDid, namePm);
 							if (string.IsNullOrEmpty(effText))
 							{
-								try { File.AppendAllText(Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug [{buff.Name}] effectDid=0x{nameItem.Value.EffectDid:X8} effText=null\r\n"); } catch {}
+								try { File.AppendAllText(Path.Combine(System.IO.Path.GetTempPath(), "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug [{buff.Name}] effectDid=0x{nameItem.Value.EffectDid:X8} effText=null\r\n"); } catch {}
 								continue;
 							}
 							string stripped = effText.StartsWith("Spell: ", StringComparison.OrdinalIgnoreCase) ? effText.Substring(7) : effText;
-							try { File.AppendAllText(Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug [{buff.Name}] effectDid=0x{nameItem.Value.EffectDid:X8} effText='{effText}' stripped='{stripped.Trim()}'\r\n"); } catch {}
+							try { File.AppendAllText(Path.Combine(System.IO.Path.GetTempPath(), "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug [{buff.Name}] effectDid=0x{nameItem.Value.EffectDid:X8} effText='{effText}' stripped='{stripped.Trim()}'\r\n"); } catch {}
 							if (!string.Equals(stripped.Trim(), buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !stripped.Trim().Contains(buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !buff.Name.Trim().Contains(stripped.Trim(), StringComparison.OrdinalIgnoreCase))
 							{
 								continue;
@@ -1209,6 +1211,7 @@ public class HudImGui
 		try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "hudtrace.log"), $"[{DateTime.Now:HH:mm:ss.fff}] Hud.Render: showBuffs={config.HudShowBuffs} showCooldowns={config.HudShowCooldowns} showToggles={config.HudShowToggles} showTarget={config.HudShowTarget}\r\n"); } catch {}
 		ImGuiNET.ImGui.SetNextWindowPos(new System.Numerics.Vector2(config.HudX, config.HudY), ImGuiNET.ImGuiCond.FirstUseEver);
 		ImGuiNET.ImGui.SetNextWindowBgAlpha(0.65f);
+		ImGuiNET.ImGui.SetNextWindowSizeConstraints(new System.Numerics.Vector2(230f, 40f), new System.Numerics.Vector2(400f, 600f));
 		ImGuiNET.ImGui.Begin($"Rotation Helper HUD##{RotationHelperPlugin.PluginGuid}", ImGuiNET.ImGuiWindowFlags.AlwaysAutoResize | ImGuiNET.ImGuiWindowFlags.NoCollapse);
 		config.HudX = (int)ImGuiNET.ImGui.GetWindowPos().X;
 		config.HudY = (int)ImGuiNET.ImGui.GetWindowPos().Y;
