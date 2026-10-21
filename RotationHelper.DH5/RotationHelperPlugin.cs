@@ -5177,10 +5177,14 @@ catch { }
 								num = 268442925u;
 							}
 							IProperty property = entity.GetProperty(num);
-							if (property != null && rotationAbility.ToggleExpectedValue != null && string.Equals(Convert.ToString(property), rotationAbility.ToggleExpectedValue, StringComparison.OrdinalIgnoreCase))
+							if (property != null && rotationAbility.ToggleExpectedValue != null && string.Equals(Convert.ToString(property.Value), rotationAbility.ToggleExpectedValue, StringComparison.OrdinalIgnoreCase))
 							{
 								continue;
 							}
+						}
+						if (IsToggleActive(value, rotationAbility.Name))
+						{
+							continue;
 						}
 					}
 					if (_sessionToggleFired.Contains(value))
@@ -5701,10 +5705,10 @@ catch { }
 								if (entity8 != null)
 								{
 									IProperty property4 = entity8.GetProperty(rotationAbility7.ToggleStatePropertyDid);
-									flag9 = property4 != null && string.Equals(Convert.ToString(property4), rotationAbility7.ToggleExpectedValue, StringComparison.OrdinalIgnoreCase);
+									flag9 = property4 != null && string.Equals(Convert.ToString(property4.Value), rotationAbility7.ToggleExpectedValue, StringComparison.OrdinalIgnoreCase);
 								}
 							}
-							else
+							if (!flag9)
 							{
 								flag9 = IsToggleActive(rotationAbility7.ReferenceDid.Value, rotationAbility7.Name);
 							}
