@@ -626,38 +626,170 @@ public class BuffManager : IDisposable
 				}
 			}
 			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
-			if (readOnlyDictionary == null || readOnlyDictionary.Count == 0)
+			try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug call from {buff.Name} num=0x{num:X8}\r\n"); } catch (Exception e) { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug_err.log"), $"{e}\r\n"); }
+			if (readOnlyDictionary != null && readOnlyDictionary.Count > 0)
 			{
+				foreach (KeyValuePair<int, IActiveEffect> item in readOnlyDictionary)
+				{
+					IActiveEffect value = item.Value;
+					if (value.EffectDid != (int)num)
+					{
+						continue;
+					}
+					if (value.Duration.GetValueOrDefault() == -1f)
+					{
+						return new BuffRemaining
+						{
+							IsActive = true,
+							RemainingSeconds = int.MaxValue
+						};
+					}
+					if (value.Duration.HasValue && !(value.Duration <= 0f))
+					{
+						DateTime? dateTime = (Dh5Compat.EffectExpiration(value));
+						if (dateTime.HasValue && dateTime.Value > DateTime.UtcNow)
+						{
+							int remainingSeconds2 = (int)(dateTime.Value - DateTime.UtcNow).TotalSeconds;
+							return new BuffRemaining
+							{
+								IsActive = true,
+								RemainingSeconds = remainingSeconds2
+							};
+						}
+					}
+				}
+				if (!string.IsNullOrEmpty(buff.Name))
+				{
+					IPropertyMaster namePm = _gameDataProvider?.PropertyMaster;
+					if (namePm != null)
+					{
+						foreach (KeyValuePair<int, IActiveEffect> nameItem in readOnlyDictionary)
+						{
+							IPropertyCollection nameProps = namePm.GetPropertyCollection((uint)nameItem.Value.EffectDid);
+							if (nameProps == null)
+							{
+								continue;
+							}
+							string effText = RotationHelperPlugin.ExtractTextFromProps(nameProps, (uint)nameItem.Value.EffectDid, namePm);
+							if (string.IsNullOrEmpty(effText))
+							{
+								try { File.AppendAllText(Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug [{buff.Name}] effectDid=0x{nameItem.Value.EffectDid:X8} effText=null\r\n"); } catch {}
+								continue;
+							}
+							string stripped = effText.StartsWith("Spell: ", StringComparison.OrdinalIgnoreCase) ? effText.Substring(7) : effText;
+							try { File.AppendAllText(Path.Combine(RotationHelperPlugin.AppDataDir, "buffdebug.log"), $"[{DateTime.Now:HH:mm:ss.fff}] BuffDebug [{buff.Name}] effectDid=0x{nameItem.Value.EffectDid:X8} effText='{effText}' stripped='{stripped.Trim()}'\r\n"); } catch {}
+							if (!string.Equals(stripped.Trim(), buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !stripped.Trim().Contains(buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !buff.Name.Trim().Contains(stripped.Trim(), StringComparison.OrdinalIgnoreCase))
+							{
+								continue;
+							}
+							float nameDuration = nameItem.Value.Duration.GetValueOrDefault();
+							if (nameDuration == -1f)
+							{
+								return new BuffRemaining
+								{
+									IsActive = true,
+									RemainingSeconds = int.MaxValue
+								};
+							}
+							DateTime? nameExpiry = Dh5Compat.EffectExpiration(nameItem.Value);
+							int nameRemaining = (nameExpiry.HasValue ? (int)Math.Max(0.0, (nameExpiry.Value - DateTime.UtcNow).TotalSeconds) : (int)Math.Max(0f, nameDuration));
+							return new BuffRemaining
+							{
+								IsActive = true,
+								RemainingSeconds = nameRemaining
+							};
+						}
+					}
+				}
 				return new BuffRemaining
 				{
 					IsActive = false
 				};
 			}
-			foreach (KeyValuePair<int, IActiveEffect> item in readOnlyDictionary)
+			if (!string.IsNullOrEmpty(buff.Name))
 			{
-				IActiveEffect value = item.Value;
-				if (value.EffectDid != (int)num)
+				IPropertyMaster namePm2 = _gameDataProvider?.PropertyMaster;
+				if (namePm2 != null && readOnlyDictionary != null)
 				{
-					continue;
-				}
-				if (value.Duration.GetValueOrDefault() == -1f)
-				{
-					return new BuffRemaining
+					foreach (KeyValuePair<int, IActiveEffect> nameItem in readOnlyDictionary)
 					{
-						IsActive = true,
-						RemainingSeconds = int.MaxValue
-					};
-				}
-				if (value.Duration.HasValue && !(value.Duration <= 0f))
-				{
-					DateTime? dateTime = (Dh5Compat.EffectExpiration(value));
-					if (dateTime.HasValue && dateTime.Value > DateTime.UtcNow)
-					{
-						int remainingSeconds2 = (int)(dateTime.Value - DateTime.UtcNow).TotalSeconds;
+						IPropertyCollection nameProps = namePm2.GetPropertyCollection((uint)nameItem.Value.EffectDid);
+						if (nameProps == null)
+						{
+							continue;
+						}
+						string effText = RotationHelperPlugin.ExtractTextFromProps(nameProps, (uint)nameItem.Value.EffectDid, namePm2);
+						if (string.IsNullOrEmpty(effText))
+						{
+							continue;
+						}
+						if (effText.StartsWith("Spell: ", StringComparison.OrdinalIgnoreCase))
+						{
+							effText = effText.Substring(7);
+						}
+						if (!string.Equals(effText.Trim(), buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !effText.Trim().Contains(buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !buff.Name.Trim().Contains(effText.Trim(), StringComparison.OrdinalIgnoreCase))
+						{
+							continue;
+						}
+						float nameDuration = nameItem.Value.Duration.GetValueOrDefault();
+						if (nameDuration == -1f)
+						{
+							return new BuffRemaining
+							{
+								IsActive = true,
+								RemainingSeconds = int.MaxValue
+							};
+						}
+						DateTime? nameExpiry = Dh5Compat.EffectExpiration(nameItem.Value);
+						int nameRemaining = (nameExpiry.HasValue ? (int)Math.Max(0.0, (nameExpiry.Value - DateTime.UtcNow).TotalSeconds) : (int)Math.Max(0f, nameDuration));
 						return new BuffRemaining
 						{
 							IsActive = true,
-							RemainingSeconds = remainingSeconds2
+							RemainingSeconds = nameRemaining
+						};
+					}
+				}
+			}
+			if (!string.IsNullOrEmpty(buff.Name))
+			{
+				IPropertyMaster namePm2 = _gameDataProvider?.PropertyMaster;
+				if (namePm2 != null && readOnlyDictionary != null)
+				{
+					foreach (KeyValuePair<int, IActiveEffect> nameItem in readOnlyDictionary)
+					{
+						IPropertyCollection nameProps = namePm2.GetPropertyCollection((uint)nameItem.Value.EffectDid);
+						if (nameProps == null)
+						{
+							continue;
+						}
+						string effText = RotationHelperPlugin.ExtractTextFromProps(nameProps, (uint)nameItem.Value.EffectDid, namePm2);
+						if (string.IsNullOrEmpty(effText))
+						{
+							continue;
+						}
+						if (effText.StartsWith("Spell: ", StringComparison.OrdinalIgnoreCase))
+						{
+							effText = effText.Substring(7);
+						}
+						if (!string.Equals(effText.Trim(), buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !effText.Trim().Contains(buff.Name.Trim(), StringComparison.OrdinalIgnoreCase) && !buff.Name.Trim().Contains(effText.Trim(), StringComparison.OrdinalIgnoreCase))
+						{
+							continue;
+						}
+						float nameDuration = nameItem.Value.Duration.GetValueOrDefault();
+						if (nameDuration == -1f)
+						{
+							return new BuffRemaining
+							{
+								IsActive = true,
+								RemainingSeconds = int.MaxValue
+							};
+						}
+						DateTime? nameExpiry = Dh5Compat.EffectExpiration(nameItem.Value);
+						int nameRemaining = (nameExpiry.HasValue ? (int)Math.Max(0.0, (nameExpiry.Value - DateTime.UtcNow).TotalSeconds) : (int)Math.Max(0f, nameDuration));
+						return new BuffRemaining
+						{
+							IsActive = true,
+							RemainingSeconds = nameRemaining
 						};
 					}
 				}
@@ -1074,6 +1206,7 @@ public class HudImGui
 		{
 			return;
 		}
+		try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "hudtrace.log"), $"[{DateTime.Now:HH:mm:ss.fff}] Hud.Render: showBuffs={config.HudShowBuffs} showCooldowns={config.HudShowCooldowns} showToggles={config.HudShowToggles} showTarget={config.HudShowTarget}\r\n"); } catch {}
 		ImGuiNET.ImGui.SetNextWindowPos(new System.Numerics.Vector2(config.HudX, config.HudY), ImGuiNET.ImGuiCond.FirstUseEver);
 		ImGuiNET.ImGui.SetNextWindowBgAlpha(0.65f);
 		ImGuiNET.ImGui.Begin($"Rotation Helper HUD##{RotationHelperPlugin.PluginGuid}", ImGuiNET.ImGuiWindowFlags.AlwaysAutoResize | ImGuiNET.ImGuiWindowFlags.NoCollapse);
@@ -1138,10 +1271,14 @@ public class HudImGui
 	private void RenderCooldowns()
 	{
 		bool drewHeader = false;
+		int cdTotal = 0;
+		int cdEligible = 0;
 		foreach (RotationAbility item in _plugin.Rotation)
 		{
+			cdTotal++;
 			if (item.Autocast && item.CooldownMs > 0)
 			{
+				cdEligible++;
 				long remainingCooldownMs = _plugin.GetRemainingCooldownMs(item);
 				if (remainingCooldownMs > 0)
 				{
@@ -1155,6 +1292,7 @@ public class HudImGui
 				}
 			}
 		}
+		_plugin.Log($"HUD[Cooldowns] total={cdTotal} eligible(Autocast&CD>0)={cdEligible} drewHeader={drewHeader}");
 	}
 
 	private void RenderBuffs()
@@ -1162,26 +1300,34 @@ public class HudImGui
 		BuffManager buffManager = _plugin.BuffManager;
 		if (buffManager == null)
 		{
+			_plugin.Log("HUD[Buffs] buffManager=null");
 			return;
 		}
 		bool drewHeader = false;
+		int bfTotal = 0;
+		int bfActive = 0;
 		foreach (RotationAbility item in _plugin.BuffOrder)
 		{
 			if (item.ReferenceDid.GetValueOrDefault() == 0)
 			{
 				continue;
 			}
+			bfTotal++;
+			uint cachedEffect = _plugin.GameCache.GetCachedEffectDid(item.ReferenceDid.Value);
 			AutoBuffConfig autoBuffConfig = new AutoBuffConfig
 			{
 				Name = item.Name,
 				ActionDid = item.ReferenceDid.Value,
-				EffectDid = _plugin.GameCache.GetCachedEffectDid(item.ReferenceDid.Value)
+				EffectDid = cachedEffect
 			};
-			BuffRemaining buffRemaining = buffManager.GetBuffRemaining(autoBuffConfig);
+		BuffRemaining buffRemaining = buffManager.GetBuffRemaining(autoBuffConfig);
+		try { System.IO.File.AppendAllText(@"C:\Users\Tanner\AppData\Local\Temp\rh_debug.log", $"[{DateTime.Now:HH:mm:ss.fff}] Direct {item.Name} cached=0x{cachedEffect:X8} active={buffRemaining.IsActive} rem={buffRemaining.RemainingSeconds}\r\n"); } catch (Exception ex) { try { System.IO.File.AppendAllText(@"C:\Users\Tanner\AppData\Local\Temp\rh_debug_err.log", ex.ToString() + "\r\n"); } catch {} }
+		_plugin.Log($"HUD[Buffs] '{item.Name}' refDid=0x{item.ReferenceDid.Value:X8} cachedEffectDid=0x{cachedEffect:X8} active={buffRemaining.IsActive} rem={buffRemaining.RemainingSeconds}");
 			if (!buffRemaining.IsActive)
 			{
 				continue;
 			}
+			bfActive++;
 			if (!drewHeader)
 			{
 				ImGuiNET.ImGui.Separator();
@@ -1201,6 +1347,7 @@ public class HudImGui
 			float progress = (float)((double)buffRemaining.RemainingSeconds / (double)num);
 			ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(-1f, 14f), $"{buffRemaining.RemainingSeconds}s  {item.Name}");
 		}
+		_plugin.Log($"HUD[Buffs] total={bfTotal} active={bfActive}");
 	}
 }
 
@@ -4223,7 +4370,11 @@ catch { }
 			{
 				try
 				{
-					num3 = Convert.ToDouble(property);
+					object gameTimeVal = property.Value;
+					if (gameTimeVal != null)
+					{
+						num3 = Convert.ToDouble(gameTimeVal);
+					}
 				}
 				catch
 				{
@@ -4995,7 +5146,7 @@ catch { }
 		return null;
 	}
 
-	private static string ExtractTextFromProps(IPropertyCollection props, uint did, IPropertyMaster propMaster)
+	internal static string ExtractTextFromProps(IPropertyCollection props, uint did, IPropertyMaster propMaster)
 	{
 		try
 		{
