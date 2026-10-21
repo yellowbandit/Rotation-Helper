@@ -4373,9 +4373,9 @@ catch { }
 		{
 			return false;
 		}
-		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < ability.CooldownMs)
+		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime))
 		{
-			return true;
+			return (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < ability.CooldownMs;
 		}
 		if (ability.CooldownTimerDid1 == 0 && ability.CooldownTimerDid2 == 0 && ability.CooldownTimerDid3 == 0)
 		{
@@ -4395,6 +4395,10 @@ catch { }
 		{
 			timeBasedMs = ability.CooldownMs - (long)(DateTime.UtcNow - ability.LastFired).TotalMilliseconds;
 			if (timeBasedMs < 0L) timeBasedMs = 0L;
+		}
+		if (timeBasedMs > 0L)
+		{
+			return timeBasedMs;
 		}
 		uint valueOrDefault = ability.ReferenceDid.GetValueOrDefault();
 		double num = double.NaN;
