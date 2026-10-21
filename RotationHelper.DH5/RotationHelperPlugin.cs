@@ -4119,6 +4119,7 @@ catch { }
 					if (rotationAbility2 != null && FireAbility(rotationAbility2, skipCooldown: true))
 					{
 						Log("ROTATION fire (smart) " + rotationAbility2.Name);
+						rotationAbility2.LastFired = DateTime.UtcNow;
 						flag = true;
 						_lastFireTime = DateTime.UtcNow;
 						int num2 = Math.Max(50, _config.PressDelayMs);
@@ -4161,6 +4162,7 @@ catch { }
 									continue;
 								}
 								Log($"ROTATION fire index={k} name={rotationAbility3.Name}");
+								rotationAbility3.LastFired = DateTime.UtcNow;
 								flag = true;
 								_lastFireTime = DateTime.UtcNow;
 								_rotationIndex = (k + 1) % list.Count;
