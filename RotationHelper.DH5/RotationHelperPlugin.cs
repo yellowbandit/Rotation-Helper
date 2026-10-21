@@ -135,7 +135,12 @@ public class BuffManager : IDisposable
 	}
 
 	private readonly IDdoEventProvider _eventProvider;
-	public BuffManager(IDdoGameDataProvider gameDataProvider, IDdoEventProvider eventProvider, string configDir, Action<string> log)
+
+	private readonly ConcurrentDictionary<int, BuffEffectState> _activeEffects = new ConcurrentDictionary<int, BuffEffectState>();
+
+	private readonly GameDataCache _gameCache;
+
+	public BuffManager(IDdoGameDataProvider gameDataProvider, IDdoEventProvider eventProvider, string configDir, Action<string> log, GameDataCache gameCache = null)
 	{
 		_gameDataProvider = gameDataProvider;
 		_gameData = gameDataProvider;
@@ -143,6 +148,7 @@ public class BuffManager : IDisposable
 		_configDir = configDir;
 		_eventProvider = eventProvider;
 		_log = log;
+		_gameCache = gameCache;
 	}
 
 	public void Initialize()
@@ -178,6 +184,7 @@ public class BuffManager : IDisposable
 			{
 				_log("BuffManager: OnLogin — resetting state");
 				_lastFired.Clear();
+				_activeEffects.Clear();
 				_stancesInitialized = false;
 				_zoneChangeCount = 0;
 				_lastZoneChangeCount = 0;
@@ -189,6 +196,7 @@ public class BuffManager : IDisposable
 				_log("BuffManager: OnLogout — saving profile");
 				SaveProfile();
 				_lastFired.Clear();
+				_activeEffects.Clear();
 				_stancesInitialized = false;
 				return Task.CompletedTask;
 			});
@@ -204,6 +212,114 @@ public class BuffManager : IDisposable
 				_log("BuffManager: OnProgressStop — zone change detected");
 				return Task.CompletedTask;
 			});
+			eventProvider.OnEffectExpress.AddHandler(delegate(IEffectExpress effect)
+			{
+				try
+				{
+					if (effect != null)
+					{
+						int effectId = effect.EffectId.GetValueOrDefault();
+						BuffEffectState state = new BuffEffectState
+						{
+							EffectId = effectId,
+							EffectDid = effect.EffectDid,
+							Duration = effect.Duration.GetValueOrDefault(),
+							IsPaused = false,
+							ApplicationTimeUtc = DateTime.UtcNow,
+							LastUpdateUtc = DateTime.UtcNow
+						};
+						if (effectId != 0)
+						{
+							_activeEffects[effectId] = state;
+						}
+						CaptureEffectDidFromExpress(effect);
+					}
+				}
+				catch (Exception ex)
+				{
+					_log("BuffManager: OnEffectExpress error " + ex.Message);
+				}
+				return Task.CompletedTask;
+			});
+			eventProvider.OnEffectSuppress.AddHandler(delegate(int effectId)
+			{
+				try
+				{
+					_activeEffects.TryRemove(effectId, out var _);
+				}
+				catch (Exception ex)
+				{
+					_log("BuffManager: OnEffectSuppress error " + ex.Message);
+				}
+				return Task.CompletedTask;
+			});
+			eventProvider.OnEffectUpdateDuration.AddHandler(delegate(IEffectUpdateDuration update)
+			{
+				try
+				{
+					if (update != null && _activeEffects.TryGetValue(update.EffectId, out var state))
+					{
+						state.Duration = update.RemainingSeconds;
+						state.IsPaused = update.IsPaused;
+						state.LastUpdateUtc = DateTime.UtcNow;
+					}
+				}
+				catch (Exception ex)
+				{
+					_log("BuffManager: OnEffectUpdateDuration error " + ex.Message);
+				}
+				return Task.CompletedTask;
+			});
+		}
+	}
+
+	private void CaptureEffectDidFromExpress(IEffectExpress effect)
+	{
+		try
+		{
+			if (_propertyMaster == null || effect.EffectDid == 0)
+			{
+				return;
+			}
+			IPropertyCollection effectProps = _propertyMaster.GetPropertyCollection((uint)effect.EffectDid);
+			if (effectProps == null)
+			{
+				return;
+			}
+			foreach (IProperty property in effectProps.Properties)
+			{
+				if (!(property is IArrayProperty arr))
+				{
+					continue;
+				}
+				foreach (IProperty entry in arr.Properties)
+				{
+					if (!(entry is IPropertyCollection entryProps))
+					{
+						continue;
+					}
+					foreach (IProperty ep in entryProps.Properties)
+					{
+						uint actionDid = 0u;
+						if (ep is IUInt32Property u32 && u32.UInt32Value.HasValue && u32.UInt32Value.Value > 1879048192 && u32.UInt32Value.Value < 1895825407)
+						{
+							actionDid = u32.UInt32Value.Value;
+						}
+						else if (ep is IInt32Property i32 && i32.Int32Value.HasValue && i32.Int32Value.Value > 1879048192 && i32.Int32Value.Value < 1895825407)
+						{
+							actionDid = (uint)i32.Int32Value.Value;
+						}
+						if (actionDid != 0 && _gameCache != null && _gameCache.GetCachedEffectDid(actionDid) == 0)
+						{
+							_gameCache.CacheEffectDid(actionDid, (uint)effect.EffectDid);
+							_log($"Effect DID captured: action 0x{actionDid:X8} → effect 0x{effect.EffectDid:X8}");
+						}
+					}
+				}
+			}
+		}
+		catch
+		{
 		}
 	}
 
@@ -329,17 +445,75 @@ public class BuffManager : IDisposable
 		}
 	}
 
+	public bool IsEffectActiveByDid(uint effectDid)
+	{
+		if (effectDid == 0)
+		{
+			return false;
+		}
+		try
+		{
+			if (_activeEffects.Count > 0)
+			{
+				foreach (BuffEffectState state in _activeEffects.Values)
+				{
+					if (state.EffectDid == (int)effectDid)
+					{
+						if (state.Duration == -1f || state.Duration > 0f)
+						{
+							return true;
+						}
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return false;
+	}
+
 	public bool IsBuffActive(AutoBuffConfig buff)
 	{
 		try
 		{
-			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
-			if (readOnlyDictionary == null || readOnlyDictionary.Count == 0)
+			uint num = buff.EffectDid ?? buff.ActionDid;
+			if (num == 0)
 			{
 				return false;
 			}
-			uint num = buff.EffectDid ?? buff.ActionDid;
-			if (num == 0)
+			bool flag = false;
+			bool flag2 = _activeEffects.Count > 0;
+			if (flag2)
+			{
+				foreach (BuffEffectState state in _activeEffects.Values)
+				{
+					if (state.EffectDid != (int)num)
+					{
+						continue;
+					}
+					if (state.Duration == -1f)
+					{
+						return true;
+					}
+					if (state.Duration > 0f && !state.IsPaused)
+					{
+						flag = true;
+						break;
+					}
+					if (state.Duration > 0f && state.IsPaused)
+					{
+						flag = true;
+						break;
+					}
+				}
+				if (flag)
+				{
+					return true;
+				}
+			}
+			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
+			if (readOnlyDictionary == null || readOnlyDictionary.Count == 0)
 			{
 				return false;
 			}
@@ -406,16 +580,53 @@ public class BuffManager : IDisposable
 	{
 		try
 		{
-			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
-			if (readOnlyDictionary == null || readOnlyDictionary.Count == 0)
+			uint num = buff.EffectDid ?? buff.ActionDid;
+			if (num == 0)
 			{
 				return new BuffRemaining
 				{
 					IsActive = false
 				};
 			}
-			uint num = buff.EffectDid ?? buff.ActionDid;
-			if (num == 0)
+			if (_activeEffects.Count > 0)
+			{
+				foreach (BuffEffectState state in _activeEffects.Values)
+				{
+					if (state.EffectDid != (int)num)
+					{
+						continue;
+					}
+					if (state.Duration == -1f)
+					{
+						return new BuffRemaining
+						{
+							IsActive = true,
+							RemainingSeconds = int.MaxValue
+						};
+					}
+					if (state.Duration > 0f)
+					{
+						int remainingSeconds = (int)state.Duration;
+						if (state.IsPaused)
+						{
+							return new BuffRemaining
+							{
+								IsActive = true,
+								RemainingSeconds = remainingSeconds
+							};
+						}
+						double elapsed = (DateTime.UtcNow - state.LastUpdateUtc).TotalSeconds;
+						int num3 = Math.Max(0, remainingSeconds - (int)elapsed);
+						return new BuffRemaining
+						{
+							IsActive = num3 > 0,
+							RemainingSeconds = num3
+						};
+					}
+				}
+			}
+			IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
+			if (readOnlyDictionary == null || readOnlyDictionary.Count == 0)
 			{
 				return new BuffRemaining
 				{
@@ -442,11 +653,11 @@ public class BuffManager : IDisposable
 					DateTime? dateTime = (Dh5Compat.EffectExpiration(value));
 					if (dateTime.HasValue && dateTime.Value > DateTime.UtcNow)
 					{
-						int remainingSeconds = (int)(dateTime.Value - DateTime.UtcNow).TotalSeconds;
+						int remainingSeconds2 = (int)(dateTime.Value - DateTime.UtcNow).TotalSeconds;
 						return new BuffRemaining
 						{
 							IsActive = true,
-							RemainingSeconds = remainingSeconds
+							RemainingSeconds = remainingSeconds2
 						};
 					}
 				}
@@ -634,6 +845,20 @@ public class BuffRemaining
 	public bool IsActive { get; set; }
 
 	public int RemainingSeconds { get; set; }
+}
+public class BuffEffectState
+{
+	public int EffectId { get; set; }
+
+	public int EffectDid { get; set; }
+
+	public float Duration { get; set; }
+
+	public bool IsPaused { get; set; }
+
+	public DateTime ApplicationTimeUtc { get; set; }
+
+	public DateTime LastUpdateUtc { get; set; }
 }
 public class GameDataCache
 {
@@ -1804,8 +2029,13 @@ public class ImGuiConfigWindow
 		ImGuiNET.ImGui.Text("Profile");
 		if (ImGuiNET.ImGui.Button("Save Profile"))
 		{
-			SaveAll();
+			_plugin.SaveProfileSnapshot();
 			_statusMessage = "Profile saved for '" + _plugin.GetCharacterName() + "'";
+		}
+		ImGuiNET.ImGui.SameLine();
+		if (ImGuiNET.ImGui.Button("Revert to Saved"))
+		{
+			_statusMessage = _plugin.LoadProfileSnapshot() ? "Reverted to last saved profile" : "No saved snapshot to revert to";
 		}
 		ImGuiNET.ImGui.SameLine();
 		if (ImGuiNET.ImGui.Button("Reload Profile"))
@@ -3428,7 +3658,7 @@ catch { }
 		LoadEmergency();
 		LoadToggleBuffs();
 		ReloadToggleBuffStatesFromConfig();
-		BuffManager = new BuffManager(_gameDataProvider, _eventProvider, _pluginFolder, Log);
+		BuffManager = new BuffManager(_gameDataProvider, _eventProvider, _pluginFolder, Log, GameCache);
 		BuffManager.Initialize();
 		BuffManager.DisableInPublicAreas = _config.BuffDisablePublic;
 		BuffManager.EnabledZoneDids = _config.EnabledZoneDids;
@@ -5058,16 +5288,23 @@ catch { }
 							}
 							if (!flag3 && valueOrDefault != 0)
 							{
-								IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
-								if (readOnlyDictionary != null)
+								uint cachedEffectDid = GameCache.GetCachedEffectDid(valueOrDefault);
+								if (BuffManager != null && (BuffManager.IsEffectActiveByDid(valueOrDefault) || (cachedEffectDid != 0 && BuffManager.IsEffectActiveByDid(cachedEffectDid))))
 								{
-									uint cachedEffectDid = GameCache.GetCachedEffectDid(valueOrDefault);
-									foreach (KeyValuePair<int, IActiveEffect> item2 in readOnlyDictionary)
+									flag3 = true;
+								}
+								if (!flag3)
+								{
+									IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary = _gameDataProvider?.GetActiveEffects();
+									if (readOnlyDictionary != null)
 									{
-										if (item2.Value.EffectDid == (int)valueOrDefault || (cachedEffectDid != 0 && item2.Value.EffectDid == (int)cachedEffectDid))
+										foreach (KeyValuePair<int, IActiveEffect> item2 in readOnlyDictionary)
 										{
-											flag3 = true;
-											break;
+											if (item2.Value.EffectDid == (int)valueOrDefault || (cachedEffectDid != 0 && item2.Value.EffectDid == (int)cachedEffectDid))
+											{
+												flag3 = true;
+												break;
+											}
 										}
 									}
 								}
@@ -5530,16 +5767,23 @@ catch { }
 									bool flag10 = false;
 									if (rotationAbility7.TargetType == "A Party Member" && valueOrDefault2 != 0)
 									{
-										IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary2 = _gameDataProvider?.GetActiveEffects();
-										if (readOnlyDictionary2 != null)
+										uint cachedEffectDid2 = GameCache.GetCachedEffectDid(valueOrDefault2);
+										if (BuffManager != null && (BuffManager.IsEffectActiveByDid(valueOrDefault2) || (cachedEffectDid2 != 0 && BuffManager.IsEffectActiveByDid(cachedEffectDid2))))
 										{
-											uint cachedEffectDid2 = GameCache.GetCachedEffectDid(valueOrDefault2);
-											foreach (KeyValuePair<int, IActiveEffect> item5 in readOnlyDictionary2)
+											flag10 = true;
+										}
+										if (!flag10)
+										{
+											IReadOnlyDictionary<int, IActiveEffect> readOnlyDictionary2 = _gameDataProvider?.GetActiveEffects();
+											if (readOnlyDictionary2 != null)
 											{
-												if (item5.Value.EffectDid == (int)valueOrDefault2 || (cachedEffectDid2 != 0 && item5.Value.EffectDid == (int)cachedEffectDid2))
+												foreach (KeyValuePair<int, IActiveEffect> item5 in readOnlyDictionary2)
 												{
-													flag10 = true;
-													break;
+													if (item5.Value.EffectDid == (int)valueOrDefault2 || (cachedEffectDid2 != 0 && item5.Value.EffectDid == (int)cachedEffectDid2))
+													{
+														flag10 = true;
+														break;
+													}
 												}
 											}
 										}
@@ -6587,6 +6831,96 @@ catch { }
 			return Path.Combine(profileDir, GetFileStem() + "-settings.json");
 		}
 		return Path.Combine(_pluginFolder, "RotationHelper.json");
+	}
+
+	private string GetSnapshotPath(string suffix)
+	{
+		string profileDir = GetProfileDir();
+		if (profileDir != null)
+		{
+			return Path.Combine(profileDir, GetFileStem() + suffix);
+		}
+		return null;
+	}
+
+	internal void SaveProfileSnapshot()
+	{
+		try
+		{
+			SaveRotation();
+			SaveBuffOrder();
+			SaveEmergency();
+			SaveToggleBuffs();
+			SaveConfig();
+			JsonSerializerOptions options = new JsonSerializerOptions
+			{
+				WriteIndented = true
+			};
+			string[] suffixes = new string[5] { "-rotation.json", "-bufforder.json", "-emergency.json", "-toggles.json", "-settings.json" };
+			bool wroteAny = false;
+			foreach (string suffix in suffixes)
+			{
+				string livePath = GetSnapshotPath(suffix);
+				if (string.IsNullOrEmpty(livePath) || !File.Exists(livePath))
+				{
+					continue;
+				}
+				string snapshotPath = GetSnapshotPath("-saved" + suffix);
+				File.Copy(livePath, snapshotPath, true);
+				wroteAny = true;
+			}
+			Log(wroteAny ? ("Saved profile snapshot for '" + _config?.CharacterName + "'") : "Save profile snapshot: no files to snapshot");
+		}
+		catch (Exception ex)
+		{
+			Log("Save profile snapshot error: " + ex.Message);
+		}
+	}
+
+	internal bool LoadProfileSnapshot()
+	{
+		try
+		{
+			JsonSerializerOptions options = new JsonSerializerOptions
+			{
+				WriteIndented = true
+			};
+			string rotationSnapshot = GetSnapshotPath("-saved-rotation.json");
+			if (string.IsNullOrEmpty(rotationSnapshot) || !File.Exists(rotationSnapshot))
+			{
+				return false;
+			}
+			Rotation = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(rotationSnapshot), options) ?? new List<RotationAbility>();
+			string buffSnapshot = GetSnapshotPath("-saved-bufforder.json");
+			BuffOrder = (File.Exists(buffSnapshot) ? JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(buffSnapshot), options) : null) ?? new List<RotationAbility>();
+			string emergencySnapshot = GetSnapshotPath("-saved-emergency.json");
+			Emergency = (File.Exists(emergencySnapshot) ? JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(emergencySnapshot), options) : null) ?? new List<RotationAbility>();
+			string togglesSnapshot = GetSnapshotPath("-saved-toggles.json");
+			ToggleBuffs = (File.Exists(togglesSnapshot) ? JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(togglesSnapshot), options) : null) ?? new List<RotationAbility>();
+			string settingsSnapshot = GetSnapshotPath("-saved-settings.json");
+			if (File.Exists(settingsSnapshot))
+			{
+				RotationConfig rotationConfig = JsonSerializer.Deserialize<RotationConfig>(File.ReadAllText(settingsSnapshot), options);
+				if (rotationConfig != null)
+				{
+					string characterName = _config?.CharacterName;
+					_config = rotationConfig;
+					_config.CharacterName = characterName;
+				}
+			}
+			SaveRotation();
+			SaveBuffOrder();
+			SaveEmergency();
+			SaveToggleBuffs();
+			SaveConfig();
+			Log("Reverted to saved profile snapshot for '" + _config?.CharacterName + "'");
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Log("Load profile snapshot error: " + ex.Message);
+			return false;
+		}
 	}
 
 	internal void SaveConfig()
