@@ -5834,11 +5834,16 @@ catch { }
 						list.Add(rotationAbility5);
 					}
 				}
-				RotationAbility rotationAbility6 = (_config.SmartOrder ? PickBestAbility(list) : list.OrderBy(a => a.LastFired).FirstOrDefault());
-				if (rotationAbility6 != null && FireAbility(rotationAbility6, skipCooldown: true))
+				IEnumerable<RotationAbility> fireOrder = _config.SmartOrder
+					? list.OrderByDescending(a => a.Priority).ThenByDescending(a => (utcNow - a.LastFired).TotalMilliseconds)
+					: list.OrderBy(a => a.LastFired);
+				foreach (RotationAbility rotationAbility6 in fireOrder)
 				{
-					rotationAbility6.LastFired = utcNow;
-					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name + (_config.SmartOrder ? " (smart)" : ""));
+					if (FireAbility(rotationAbility6, skipCooldown: true))
+					{
+						rotationAbility6.LastFired = utcNow;
+						Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name + (_config.SmartOrder ? " (smart)" : ""));
+					}
 				}
 			}
 			goto IL_1bed;
