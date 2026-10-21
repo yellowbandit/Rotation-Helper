@@ -1321,7 +1321,7 @@ public class HudImGui
 			{
 				Name = item.Name,
 				ActionDid = item.ReferenceDid.Value,
-				EffectDid = cachedEffect
+				EffectDid = cachedEffect != 0 ? (uint?)cachedEffect : null
 			};
 		BuffRemaining buffRemaining = buffManager.GetBuffRemaining(autoBuffConfig);
 		try { System.IO.File.AppendAllText(@"C:\Users\Tanner\AppData\Local\Temp\rh_debug.log", $"[{DateTime.Now:HH:mm:ss.fff}] Direct {item.Name} cached=0x{cachedEffect:X8} active={buffRemaining.IsActive} rem={buffRemaining.RemainingSeconds}\r\n"); } catch (Exception ex) { try { System.IO.File.AppendAllText(@"C:\Users\Tanner\AppData\Local\Temp\rh_debug_err.log", ex.ToString() + "\r\n"); } catch {} }
@@ -4418,11 +4418,16 @@ catch { }
 				{
 					double num6 = num5 - num3;
 					long result = (long)(num6 * 1000.0);
+					try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} result={result}ms\r\n"); } catch {}
 					lock (_cacheLock)
 					{
 						_cooldownCache[valueOrDefault] = (num6, DateTime.UtcNow, num3);
 					}
 					return result;
+				}
+				else
+				{
+					try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} (timer<=gameTime, skip)\r\n"); } catch {}
 				}
 			}
 		}
