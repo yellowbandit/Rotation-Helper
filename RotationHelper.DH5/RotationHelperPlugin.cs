@@ -1283,6 +1283,7 @@ public class HudImGui
 			{
 				cdEligible++;
 				long remainingCooldownMs = _plugin.GetRemainingCooldownMs(item);
+				try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag2.log"), $"[{DateTime.Now:HH:mm:ss.fff}] HUDCD [{item.Name}] remaining={remainingCooldownMs}ms\r\n"); } catch {}
 				if (remainingCooldownMs > 0)
 				{
 					if (!drewHeader)
@@ -1296,6 +1297,21 @@ public class HudImGui
 			}
 		}
 		_plugin.Log($"HUD[Cooldowns] total={cdTotal} eligible(Autocast&CD>0)={cdEligible} drewHeader={drewHeader}");
+	}
+
+	private static string FormatTime(int seconds)
+	{
+		if (seconds < 0)
+		{
+			seconds = 0;
+		}
+		if (seconds < 60)
+		{
+			return $"{seconds}s";
+		}
+		int minutes = seconds / 60;
+		int remainingSeconds = seconds % 60;
+		return $"{minutes}m {remainingSeconds:D2}s";
 	}
 
 	private void RenderBuffs()
@@ -1344,11 +1360,11 @@ public class HudImGui
 			int num = (int)((item.BuffDurationMs > 0) ? (item.BuffDurationMs / 1000) : 0);
 			if (num <= 0)
 			{
-				ImGuiNET.ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.86f, 0.4f, 1f), $"{item.Name}  {buffRemaining.RemainingSeconds}s");
+				ImGuiNET.ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.86f, 0.4f, 1f), $"{item.Name}  {FormatTime(buffRemaining.RemainingSeconds)}");
 				continue;
 			}
 			float progress = (float)((double)buffRemaining.RemainingSeconds / (double)num);
-			ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(-1f, 14f), $"{buffRemaining.RemainingSeconds}s  {item.Name}");
+			ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(-1f, 14f), $"{FormatTime(buffRemaining.RemainingSeconds)}  {item.Name}");
 		}
 		_plugin.Log($"HUD[Buffs] total={bfTotal} active={bfActive}");
 	}
@@ -4323,6 +4339,10 @@ catch { }
 		{
 			return false;
 		}
+		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < ability.CooldownMs)
+		{
+			return true;
+		}
 		if (ability.CooldownTimerDid1 == 0 && ability.CooldownTimerDid2 == 0 && ability.CooldownTimerDid3 == 0)
 		{
 			RefreshAbilityTimerDids(ability);
@@ -4336,6 +4356,12 @@ catch { }
 
 	private long GetEntityCooldownMs(RotationAbility ability)
 	{
+		long timeBasedMs = 0L;
+		if (ability.CooldownMs > 0 && ability.LastFired != default(DateTime))
+		{
+			timeBasedMs = ability.CooldownMs - (long)(DateTime.UtcNow - ability.LastFired).TotalMilliseconds;
+			if (timeBasedMs < 0L) timeBasedMs = 0L;
+		}
 		uint valueOrDefault = ability.ReferenceDid.GetValueOrDefault();
 		double num = double.NaN;
 		if (valueOrDefault != 0)
@@ -4348,7 +4374,8 @@ catch { }
 					double num2 = value.Item1 - totalSeconds;
 					if (num2 > 0.0)
 					{
-						return (long)(num2 * 1000.0);
+						long cachedMs = (long)(num2 * 1000.0);
+						return cachedMs > timeBasedMs ? cachedMs : timeBasedMs;
 					}
 					num = value.Item3;
 					_cooldownCache.Remove(valueOrDefault);
@@ -4390,7 +4417,7 @@ catch { }
 			if (!double.IsNaN(num) && Math.Abs(num3 - num) < 0.01)
 			{
 				Log($"COOLDOWN [{ability.Name}] gameTime stale (still {num3:F1}) — expired, ready");
-				return 0L;
+				return timeBasedMs;
 			}
 			uint[] array = new uint[3] { ability.CooldownTimerDid1, ability.CooldownTimerDid2, ability.CooldownTimerDid3 };
 			uint[] array2 = array;
@@ -4423,7 +4450,7 @@ catch { }
 					{
 						_cooldownCache[valueOrDefault] = (num6, DateTime.UtcNow, num3);
 					}
-					return result;
+					return result > timeBasedMs ? result : timeBasedMs;
 				}
 				else
 				{
@@ -4435,7 +4462,7 @@ catch { }
 		{
 			Log("GetEntityCooldownMs error: " + ex.Message);
 		}
-		return 0L;
+		return timeBasedMs;
 	}
 
 	internal long GetRemainingCooldownMs(RotationAbility ability)
