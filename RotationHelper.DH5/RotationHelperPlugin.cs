@@ -1273,33 +1273,47 @@ public class HudImGui
 
 	private void RenderCooldowns()
 	{
-		bool drewHeader = false;
-		int cdTotal = 0;
-		int cdEligible = 0;
+		var rotationEntries = new System.Collections.Generic.List<RotationAbility>();
 		foreach (RotationAbility item in _plugin.Rotation)
 		{
-			cdTotal++;
 			if (item.Autocast && item.CooldownMs > 0)
 			{
-				cdEligible++;
 				long remainingCooldownMs = _plugin.GetRemainingCooldownMs(item);
-				try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag2.log"), $"[{DateTime.Now:HH:mm:ss.fff}] HUDCD [{item.Name}] remaining={remainingCooldownMs}ms\r\n"); } catch {}
 				if (remainingCooldownMs > 0)
 				{
-					if (!drewHeader)
-					{
-						ImGuiNET.ImGui.Separator();
-						drewHeader = true;
-					}
-				float progress = (float)((double)remainingCooldownMs / (double)item.CooldownMs);
-				ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(-1f, 14f), $"{remainingCooldownMs / 1000.0:F1}s  {item.Name}");
+					rotationEntries.Add(item);
 				}
 			}
 		}
-		_plugin.Log($"HUD[Cooldowns] total={cdTotal} eligible(Autocast&CD>0)={cdEligible} drewHeader={drewHeader}");
+		if (rotationEntries.Count == 0)
+		{
+			return;
+		}
+		ImGuiNET.ImGui.TextColored(new System.Numerics.Vector4(0.55f, 0.75f, 1f, 1f), "Rotation / Ability Timers");
+		ImGuiNET.ImGui.Separator();
+		foreach (RotationAbility item in rotationEntries)
+		{
+			long remainingCooldownMs = _plugin.GetRemainingCooldownMs(item);
+			float progress = (float)((double)remainingCooldownMs / (double)item.CooldownMs);
+			string countdown = $"{remainingCooldownMs / 1000.0:F1}s";
+			System.Numerics.Vector4 rowBg = new System.Numerics.Vector4(0.05f, 0.10f, 0.20f, 0.6f);
+			System.Numerics.Vector4 barColor = new System.Numerics.Vector4(0.20f, 0.50f, 0.95f, 1f);
+			System.Numerics.Vector4 countdownColor = new System.Numerics.Vector4(0.55f, 0.75f, 1f, 1f);
+			ImGuiNET.ImGui.PushStyleColor(ImGuiNET.ImGuiCol.FrameBg, rowBg);
+			ImGuiNET.ImGui.PushStyleColor(ImGuiNET.ImGuiCol.PlotHistogram, barColor);
+			ImGuiNET.ImGui.PushStyleColor(ImGuiNET.ImGuiCol.Text, new System.Numerics.Vector4(1f, 1f, 1f, 1f));
+			float avail = ImGuiNET.ImGui.GetContentRegionAvail().X;
+			float cdWidth = 42f;
+			float barWidth = avail - cdWidth - 4f;
+			if (barWidth < 40f) barWidth = 40f;
+			ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(barWidth, 14f), item.Name ?? "");
+			ImGuiNET.ImGui.PopStyleColor(3);
+			ImGuiNET.ImGui.SameLine(0, 4);
+			ImGuiNET.ImGui.TextColored(countdownColor, countdown);
+		}
 	}
 
-	private static string FormatTime(int seconds)
+private static string FormatTime(int seconds)
 	{
 		if (seconds < 0)
 		{
@@ -1322,9 +1336,8 @@ public class HudImGui
 			_plugin.Log("HUD[Buffs] buffManager=null");
 			return;
 		}
-		bool drewHeader = false;
+		var activeBuffs = new System.Collections.Generic.List<System.Tuple<RotationAbility, BuffRemaining>>();
 		int bfTotal = 0;
-		int bfActive = 0;
 		foreach (RotationAbility item in _plugin.BuffOrder)
 		{
 			if (item.ReferenceDid.GetValueOrDefault() == 0)
@@ -1339,35 +1352,54 @@ public class HudImGui
 				ActionDid = item.ReferenceDid.Value,
 				EffectDid = cachedEffect != 0 ? (uint?)cachedEffect : null
 			};
-		BuffRemaining buffRemaining = buffManager.GetBuffRemaining(autoBuffConfig);
-		try { System.IO.File.AppendAllText(@"C:\Users\Tanner\AppData\Local\Temp\rh_debug.log", $"[{DateTime.Now:HH:mm:ss.fff}] Direct {item.Name} cached=0x{cachedEffect:X8} active={buffRemaining.IsActive} rem={buffRemaining.RemainingSeconds}\r\n"); } catch (Exception ex) { try { System.IO.File.AppendAllText(@"C:\Users\Tanner\AppData\Local\Temp\rh_debug_err.log", ex.ToString() + "\r\n"); } catch {} }
-		_plugin.Log($"HUD[Buffs] '{item.Name}' refDid=0x{item.ReferenceDid.Value:X8} cachedEffectDid=0x{cachedEffect:X8} active={buffRemaining.IsActive} rem={buffRemaining.RemainingSeconds}");
+			BuffRemaining buffRemaining = buffManager.GetBuffRemaining(autoBuffConfig);
 			if (!buffRemaining.IsActive)
 			{
 				continue;
 			}
-			bfActive++;
-			if (!drewHeader)
-			{
-				ImGuiNET.ImGui.Separator();
-				drewHeader = true;
-			}
+			activeBuffs.Add(System.Tuple.Create(item, buffRemaining));
+		}
+		if (activeBuffs.Count == 0)
+		{
+			_plugin.Log($"HUD[Buffs] total={bfTotal} active=0");
+			return;
+		}
+		ImGuiNET.ImGui.TextColored(new System.Numerics.Vector4(0.55f, 0.95f, 0.65f, 1f), "Active Buffs");
+		ImGuiNET.ImGui.Separator();
+		foreach (var pair in activeBuffs)
+		{
+			RotationAbility item = pair.Item1;
+			BuffRemaining buffRemaining = pair.Item2;
+			System.Numerics.Vector4 rowBg = new System.Numerics.Vector4(0.08f, 0.16f, 0.10f, 0.6f);
+			System.Numerics.Vector4 barColor = new System.Numerics.Vector4(0.20f, 0.75f, 0.35f, 1f);
+			System.Numerics.Vector4 countdownColor = new System.Numerics.Vector4(0.55f, 0.95f, 0.65f, 1f);
 			if (buffRemaining.RemainingSeconds == int.MaxValue)
 			{
-				ImGuiNET.ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.86f, 0.4f, 1f), $"{item.Name}");
+				ImGuiNET.ImGui.TextColored(countdownColor, item.Name ?? "");
 				continue;
 			}
 			int num = (int)((item.BuffDurationMs > 0) ? (item.BuffDurationMs / 1000) : 0);
 			if (num <= 0)
 			{
-				ImGuiNET.ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.86f, 0.4f, 1f), $"{item.Name}  {FormatTime(buffRemaining.RemainingSeconds)}");
+				ImGuiNET.ImGui.TextColored(countdownColor, $"{item.Name}  {FormatTime(buffRemaining.RemainingSeconds)}");
 				continue;
 			}
 			float progress = (float)((double)buffRemaining.RemainingSeconds / (double)num);
-			ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(-1f, 14f), $"{FormatTime(buffRemaining.RemainingSeconds)}  {item.Name}");
+			ImGuiNET.ImGui.PushStyleColor(ImGuiNET.ImGuiCol.FrameBg, rowBg);
+			ImGuiNET.ImGui.PushStyleColor(ImGuiNET.ImGuiCol.PlotHistogram, barColor);
+			ImGuiNET.ImGui.PushStyleColor(ImGuiNET.ImGuiCol.Text, new System.Numerics.Vector4(1f, 1f, 1f, 1f));
+			float avail = ImGuiNET.ImGui.GetContentRegionAvail().X;
+			float cdWidth = 52f;
+			float barWidth = avail - cdWidth - 4f;
+			if (barWidth < 40f) barWidth = 40f;
+			ImGuiNET.ImGui.ProgressBar(progress, new System.Numerics.Vector2(barWidth, 14f), item.Name ?? "");
+			ImGuiNET.ImGui.PopStyleColor(3);
+			ImGuiNET.ImGui.SameLine(0, 4);
+			ImGuiNET.ImGui.TextColored(countdownColor, FormatTime(buffRemaining.RemainingSeconds));
 		}
-		_plugin.Log($"HUD[Buffs] total={bfTotal} active={bfActive}");
+		_plugin.Log($"HUD[Buffs] total={bfTotal} active={activeBuffs.Count}");
 	}
+
 }
 
 public class ImGuiConfigWindow
