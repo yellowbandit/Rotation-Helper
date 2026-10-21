@@ -2065,10 +2065,11 @@ public class ImGuiConfigWindow
 						RotationConfig rotationConfig = JsonSerializer.Deserialize<RotationConfig>(File.ReadAllText(text5), options);
 						if (rotationConfig != null)
 						{
-							rotationConfig.CharacterName = _plugin._config.CharacterName;
 							_plugin._config = rotationConfig;
 						}
 					}
+					_plugin._config.CharacterName = _loadProfileSelection;
+					_plugin._profileCharId = ParseStemCharId(stem);
 					SaveAll();
 					_statusMessage = "Loaded profile '" + _loadProfileSelection + "'";
 					return;
@@ -2082,9 +2083,10 @@ public class ImGuiConfigWindow
 			RotationConfig rotationConfig2 = JsonSerializer.Deserialize<RotationConfig>(File.ReadAllText(Path.Combine(legacyDir, "config.json")), options);
 			if (rotationConfig2 != null)
 			{
-				rotationConfig2.CharacterName = _plugin._config.CharacterName;
 				_plugin._config = rotationConfig2;
 			}
+			_plugin._config.CharacterName = _loadProfileSelection;
+			_plugin._profileCharId = 0uL;
 			SaveAll();
 			_statusMessage = "Loaded profile '" + _loadProfileSelection + "'";
 		}
@@ -2092,6 +2094,16 @@ public class ImGuiConfigWindow
 		{
 			_statusMessage = "Load failed: " + ex.Message;
 		}
+	}
+
+	private static ulong ParseStemCharId(string stem)
+	{
+		int num = stem.LastIndexOf('-');
+		if (num >= 0 && ulong.TryParse(stem.Substring(num + 1), out var result))
+		{
+			return result;
+		}
+		return 0uL;
 	}
 
 	private void SetAllRotationAutocast(bool value)
@@ -6420,29 +6432,11 @@ catch { }
 			{
 				return;
 			}
-			if (_config.CharacterName != text)
-			{
-				if (!string.IsNullOrEmpty(_config.CharacterName))
-				{
-					SaveRotation();
-					SaveBuffOrder();
-					SaveConfig();
-				}
-				string characterName = _config.CharacterName;
-				_config.CharacterName = text;
-				LoadConfig();
-				LoadRotation();
-				LoadBuffOrder();
-				LoadEmergency();
-				LoadToggleBuffs();
-				ClearToggleCache();
-				BuffManager?.LoadProfile();
-				BuffManager?.ResetZoneState();
-				Log($"Switched to character '{text}' (was '{characterName ?? "none"}')");
-			}
-			else if (!string.IsNullOrEmpty(text) && string.IsNullOrEmpty(_config.CharacterName))
+			ulong num = _gameDataProvider?.GetCurrentCharacterId().GetValueOrDefault() ?? 0;
+			if (string.IsNullOrEmpty(_config.CharacterName))
 			{
 				_config.CharacterName = text;
+				_profileCharId = num;
 				SaveConfig();
 				LoadConfig();
 				MigrateFromLegacyIfNeeded();
@@ -6453,7 +6447,32 @@ catch { }
 				ClearToggleCache();
 				BuffManager?.LoadProfile();
 				BuffManager?.ResetZoneState();
+				Log($"Initialized character '{text}' (id {num})");
+				return;
 			}
+			if (_config.CharacterName == text && _profileCharId == num)
+			{
+				return;
+			}
+			SaveRotation();
+			SaveBuffOrder();
+			SaveEmergency();
+			SaveToggleBuffs();
+			SaveConfig();
+			Log($"Saved profile for '{_config.CharacterName}' (id {_profileCharId})");
+			string characterName = _config.CharacterName;
+			ulong num2 = _profileCharId;
+			_config.CharacterName = text;
+			_profileCharId = num;
+			LoadConfig();
+			LoadRotation();
+			LoadBuffOrder();
+			LoadEmergency();
+			LoadToggleBuffs();
+			ClearToggleCache();
+			BuffManager?.LoadProfile();
+			BuffManager?.ResetZoneState();
+			Log($"Switched to character '{text}' (id {num}) (was '{characterName ?? "none"}' id {num2})");
 		}
 		catch
 		{
@@ -6510,6 +6529,8 @@ catch { }
 		return Path.Combine(ProfileRoot, GetServerFolderName(), GetAccountFolderName(), path);
 	}
 
+	internal ulong _profileCharId;
+
 	private string GetFileStem()
 	{
 		string text = _config?.CharacterName;
@@ -6518,18 +6539,44 @@ catch { }
 			return null;
 		}
 		string text2 = string.Join("_", text.Split(Path.GetInvalidFileNameChars()));
+		ulong num = _profileCharId;
+		if (num == 0)
+		{
+			num = ResolveStoredCharIdForProfile(GetProfileDir(), text2);
+		}
+		if (num != 0)
+		{
+			return text2 + "-" + num;
+		}
+		return text2;
+	}
+
+	private ulong ResolveStoredCharIdForProfile(string profileDir, string safeName)
+	{
+		if (string.IsNullOrEmpty(profileDir) || !Directory.Exists(profileDir))
+		{
+			return 0L;
+		}
 		try
 		{
-			ulong? num = _gameDataProvider?.GetCurrentCharacterId();
-			if (num.HasValue && num.Value != 0)
+			string[] files = Directory.GetFiles(profileDir, safeName + "-*settings.json");
+			foreach (string path in files)
 			{
-				return text2 + "-" + num.Value;
+				string fileName = Path.GetFileNameWithoutExtension(path);
+				if (fileName.StartsWith(safeName + "-", StringComparison.Ordinal))
+				{
+					string idText = fileName.Substring((safeName + "-").Length);
+					if (ulong.TryParse(idText, out var parsed))
+					{
+						return parsed;
+					}
+				}
 			}
 		}
 		catch
 		{
 		}
-		return text2;
+		return 0L;
 	}
 
 	private string GetConfigPath()
