@@ -1551,6 +1551,7 @@ public class ImGuiConfigWindow
 				if (string.IsNullOrEmpty(text) || (item.Name ?? "").IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0)
 				{
 					bool selected = _abilitySelection.Contains(item);
+					float listItemWidth = ImGuiNET.ImGui.GetContentRegionAvail().X;
 					if (ImGuiNET.ImGui.Selectable(item.Display, selected, ImGuiNET.ImGuiSelectableFlags.AllowDoubleClick))
 					{
 						if (ImGuiNET.ImGui.GetIO().KeyCtrl)
@@ -1570,6 +1571,7 @@ public class ImGuiConfigWindow
 							_abilitySelection.Add(item);
 						}
 					}
+					ShowTruncatedTooltip(item.Display, listItemWidth);
 				}
 			}
 		}
@@ -1699,19 +1701,53 @@ public class ImGuiConfigWindow
 		ImGuiNET.ImGui.EndChild();
 	}
 
+	private static bool IsTextTruncated(string text, float availableWidth)
+	{
+		if (string.IsNullOrEmpty(text) || availableWidth <= 0f)
+		{
+			return false;
+		}
+		ImGuiNET.ImGuiStylePtr style = ImGuiNET.ImGui.GetStyle();
+		float usable = availableWidth - (style.CellPadding.X * 2f) - 2f;
+		if (usable <= 0f)
+		{
+			return true;
+		}
+		return ImGuiNET.ImGui.CalcTextSize(text).X > usable;
+	}
+
+	private static void ShowTruncatedTooltip(string text, float availableWidth)
+	{
+		if (!IsTextTruncated(text, availableWidth))
+		{
+			return;
+		}
+		if (ImGuiNET.ImGui.IsItemHovered())
+		{
+			ImGuiNET.ImGui.SetTooltip(text);
+		}
+	}
+
 	private void RenderRotationTable()
 	{
 		int removeAt = -1;
 		bool manualCd = _manualCdMode;
-		if (ImGuiNET.ImGui.BeginTable("##rottable", 7, ImGuiNET.ImGuiTableFlags.Borders | ImGuiNET.ImGuiTableFlags.RowBg | ImGuiNET.ImGuiTableFlags.ScrollY, new System.Numerics.Vector2(0f, 260f)))
+		if (ImGuiNET.ImGui.BeginTable("##rottable", 7,
+			ImGuiNET.ImGuiTableFlags.Borders |
+			ImGuiNET.ImGuiTableFlags.RowBg |
+			ImGuiNET.ImGuiTableFlags.ScrollY |
+			ImGuiNET.ImGuiTableFlags.ScrollX |
+			ImGuiNET.ImGuiTableFlags.Resizable |
+			ImGuiNET.ImGuiTableFlags.SizingStretchProp,
+			new System.Numerics.Vector2(0f, 260f)))
 		{
-			ImGuiNET.ImGui.TableSetupColumn("Auto");
-			ImGuiNET.ImGui.TableSetupColumn("Ability");
-			ImGuiNET.ImGui.TableSetupColumn("CD(s)");
-			ImGuiNET.ImGui.TableSetupColumn("Near");
-			ImGuiNET.ImGui.TableSetupColumn("HP%");
-			ImGuiNET.ImGui.TableSetupColumn("SP%");
-			ImGuiNET.ImGui.TableSetupColumn("Prio");
+			ImGuiNET.ImGui.TableSetupColumn("Auto", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 46f);
+			ImGuiNET.ImGui.TableSetupColumn("Ability", ImGuiNET.ImGuiTableColumnFlags.WidthStretch, 220f);
+			ImGuiNET.ImGui.TableSetupColumn("CD(s)", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 70f);
+			ImGuiNET.ImGui.TableSetupColumn("Near", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
+			ImGuiNET.ImGui.TableSetupColumn("HP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
+			ImGuiNET.ImGui.TableSetupColumn("SP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
+			ImGuiNET.ImGui.TableSetupColumn("Prio", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 58f);
 			ImGuiNET.ImGui.TableHeadersRow();
 			for (int i = 0; i < _plugin.Rotation.Count; i++)
 			{
@@ -1727,13 +1763,21 @@ public class ImGuiConfigWindow
 				}
 				ImGuiNET.ImGui.TableNextColumn();
 				bool selected = (i == _rotSelectedIndex);
-				if (ImGuiNET.ImGui.Selectable($"{ability.Name}##sel", selected, ImGuiNET.ImGuiSelectableFlags.SpanAllColumns | ImGuiNET.ImGuiSelectableFlags.AllowOverlap))
+				string abilityName = string.IsNullOrEmpty(ability.Name) ? "(unnamed)" : ability.Name;
+				System.Numerics.Vector2 cellMin = ImGuiNET.ImGui.GetCursorScreenPos();
+				float cellWidth = ImGuiNET.ImGui.GetColumnWidth();
+				if (ImGuiNET.ImGui.Selectable($"{abilityName}##sel", selected, ImGuiNET.ImGuiSelectableFlags.SpanAllColumns | ImGuiNET.ImGuiSelectableFlags.AllowOverlap))
 				{
 					_rotSelectedIndex = i;
 				}
 				if (ImGuiNET.ImGui.IsItemHovered())
 				{
-					ImGuiNET.ImGui.SetTooltip($"[{ability.KeyLabel}] {ability.Name}");
+					System.Numerics.Vector2 mouse = ImGuiNET.ImGui.GetMousePos();
+					bool overAbilityColumn = (mouse.X >= cellMin.X) && (mouse.X <= (cellMin.X + cellWidth));
+					if (overAbilityColumn && IsTextTruncated(abilityName, cellWidth))
+					{
+						ImGuiNET.ImGui.SetTooltip($"[{ability.KeyLabel}] {abilityName}");
+					}
 				}
 				ImGuiNET.ImGui.TableNextColumn();
 				if (manualCd)
@@ -2074,14 +2118,22 @@ public class ImGuiConfigWindow
 			_plugin.SaveConfig();
 		}
 		ImGuiNET.ImGui.Separator();
-		if (ImGuiNET.ImGui.BeginTable("##emtable", 6, ImGuiNET.ImGuiTableFlags.Borders | ImGuiNET.ImGuiTableFlags.RowBg | ImGuiNET.ImGuiTableFlags.ScrollY, new System.Numerics.Vector2(0f, 320f)))
+		if (ImGuiNET.ImGui.BeginTable("##emtable", 7,
+			ImGuiNET.ImGuiTableFlags.Borders |
+			ImGuiNET.ImGuiTableFlags.RowBg |
+			ImGuiNET.ImGuiTableFlags.ScrollY |
+			ImGuiNET.ImGuiTableFlags.ScrollX |
+			ImGuiNET.ImGuiTableFlags.Resizable |
+			ImGuiNET.ImGuiTableFlags.SizingStretchProp,
+			new System.Numerics.Vector2(0f, 320f)))
 		{
-			ImGuiNET.ImGui.TableSetupColumn("Enabled");
-			ImGuiNET.ImGui.TableSetupColumn("Self HP%");
-			ImGuiNET.ImGui.TableSetupColumn("Party HP%");
-			ImGuiNET.ImGui.TableSetupColumn("Min #");
-			ImGuiNET.ImGui.TableSetupColumn("Scope");
-			ImGuiNET.ImGui.TableSetupColumn("Ability");
+			ImGuiNET.ImGui.TableSetupColumn("Enabled", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 56f);
+			ImGuiNET.ImGui.TableSetupColumn("Self HP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 74f);
+			ImGuiNET.ImGui.TableSetupColumn("Party HP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 80f);
+			ImGuiNET.ImGui.TableSetupColumn("Min #", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
+			ImGuiNET.ImGui.TableSetupColumn("Scope", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 70f);
+			ImGuiNET.ImGui.TableSetupColumn("Ability", ImGuiNET.ImGuiTableColumnFlags.WidthStretch, 180f);
+			ImGuiNET.ImGui.TableSetupColumn("Actions", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 110f);
 			ImGuiNET.ImGui.TableHeadersRow();
 			int removeAt = -1;
 			for (int i = 0; i < _plugin.Emergency.Count; i++)
@@ -2140,8 +2192,11 @@ public class ImGuiConfigWindow
 					_plugin.SaveEmergency();
 				}
 				ImGuiNET.ImGui.TableNextColumn();
-				ImGuiNET.ImGui.Text(ability.Name ?? "?");
-				ImGuiNET.ImGui.SameLine();
+				string emergencyName = string.IsNullOrEmpty(ability.Name) ? "(unnamed)" : ability.Name;
+				float emergencyColWidth = ImGuiNET.ImGui.GetColumnWidth();
+				ImGuiNET.ImGui.TextUnformatted(emergencyName);
+				ShowTruncatedTooltip(emergencyName, emergencyColWidth);
+				ImGuiNET.ImGui.TableNextColumn();
 				if (ImGuiNET.ImGui.SmallButton("X##rem"))
 				{
 					removeAt = i;
