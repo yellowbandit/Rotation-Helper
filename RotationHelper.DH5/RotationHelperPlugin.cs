@@ -3155,6 +3155,8 @@ catch { }
 
 	private DateTime _lastAutoTargetCheck = DateTime.MinValue;
 	private DateTime _lastNearbyLogTime = DateTime.MinValue;
+	private DateTime _lastNearbyOkLogTime = DateTime.MinValue;
+	private DateTime _lastEmergencyLogTime = DateTime.MinValue;
 	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
 
 	private ulong? _pendingEmergencyTargetId;
@@ -5651,7 +5653,11 @@ catch { }
 					Log("EMERGENCY SKIP: mounted");
 					goto IL_SkipEmergency;
 				}
-				Log($"EMERGENCY CHECK: {Emergency.Count} abilities, not pending");
+				if ((utcNow - _lastEmergencyLogTime).TotalSeconds >= 1.0)
+				{
+					_lastEmergencyLogTime = utcNow;
+					Log($"EMERGENCY CHECK: {Emergency.Count} abilities, not pending");
+				}
 				try
 				{
 					IEntity entity5 = _currentEntity;
@@ -5665,7 +5671,10 @@ catch { }
 							for (int num4 = 0; num4 < Emergency.Count; num4++)
 							{
 								RotationAbility rotationAbility2 = Emergency[num4];
-								Log($"EMERGENCY SELF CHECK [{num4}] {rotationAbility2.Name}: auto={rotationAbility2.Autocast} ref={rotationAbility2.ReferenceDid} scope={rotationAbility2.HealScope} hp%={num3:F0} threshold={rotationAbility2.CooldownMs}");
+								if ((utcNow - _lastEmergencyLogTime).TotalSeconds >= 1.0)
+								{
+									Log($"EMERGENCY SELF CHECK [{num4}] {rotationAbility2.Name}: auto={rotationAbility2.Autocast} ref={rotationAbility2.ReferenceDid} scope={rotationAbility2.HealScope} hp%={num3:F0} threshold={rotationAbility2.CooldownMs}");
+								}
 								if (rotationAbility2.Autocast && rotationAbility2.ReferenceDid.HasValue && rotationAbility2.ReferenceDid != 0 && (!(rotationAbility2.HealScope != "Self") || !(rotationAbility2.HealScope != "Both")) && !(utcNow - rotationAbility2.LastFired < TimeSpan.FromMilliseconds(500.0)) && rotationAbility2.CooldownMs > 0 && !(num3 > (double)rotationAbility2.CooldownMs))
 								{
 									ulong? num5 = _gameDataProvider?.GetSelectedObjectId();
@@ -5832,6 +5841,11 @@ catch { }
 								Log($"MIN NEARBY [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
 							}
 							continue;
+						}
+						if ((utcNow - _lastNearbyOkLogTime).TotalSeconds >= 2.0)
+						{
+							_lastNearbyOkLogTime = utcNow;
+							Log($"MIN NEARBY OK [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
 						}
 					}
 					if (rotationAbility5.TargetHpThreshold > 0)
@@ -6630,9 +6644,18 @@ catch { }
 				return 0;
 			}
 			int num2 = 0;
+			HashSet<ulong> seen = new HashSet<ulong>();
 			foreach (IEntity item in readOnlyCollection)
 			{
-				if (!IsHostileEntity(item))
+				if (item == null)
+				{
+					continue;
+				}
+				if (item.InstanceId != 0UL && !seen.Add(item.InstanceId))
+				{
+					continue;
+				}
+				if (!IsCountedEnemy(item))
 				{
 					continue;
 				}
@@ -6648,6 +6671,39 @@ catch { }
 		{
 			return 0;
 		}
+	}
+
+	// Enemies that count toward the "Near" column. Stricter than IsHostileEntity:
+	// destructibles (barrels, crates, collectables) are not enemies for AoE gating.
+	private bool IsCountedEnemy(IEntity entity)
+	{
+		if (entity == null || !IsHostileEntity(entity))
+		{
+			return false;
+		}
+		uint? weenieType = entity.WeeniePropertyCollection?.GetEnumProperty(287u)?.UInt32Value;
+		if (!weenieType.HasValue)
+		{
+			return true;
+		}
+		if (weenieType.Value == 1245313u)
+		{
+			return false;
+		}
+		switch ((WeenieType)weenieType.Value)
+		{
+		case WeenieType.Breakable:
+		case WeenieType.Collectable:
+		case WeenieType.Chest:
+		case WeenieType.Door:
+		case WeenieType.Trap:
+		case WeenieType.Mount:
+		case WeenieType.CosmeticPet:
+		case WeenieType.Henchman:
+		case WeenieType.Restpoint:
+			return false;
+		}
+		return true;
 	}
 
 	// Returns the current entity list, refreshing it on demand when the frame
@@ -6708,7 +6764,7 @@ catch { }
 					alive++;
 					uint? weenieType = item.WeeniePropertyCollection?.GetEnumProperty(287u)?.UInt32Value;
 					long? atk = ReadPropertyLong(item.GetProperty(268435581u));
-					string hostileMark = IsHostileEntity(item) ? "HOSTILE" : "no";
+					string hostileMark = IsCountedEnemy(item) ? "COUNTED" : (IsHostileEntity(item) ? "not-counted" : "no");
 					nearest.Add((Distance(myPos.Value, vector.Value), $"{item.Name}[wt=0x{weenieType.GetValueOrDefault():X},atk={(atk.HasValue ? atk.Value.ToString() : "?")},{hostileMark}]"));
 				}
 			}
