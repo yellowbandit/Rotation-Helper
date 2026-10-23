@@ -4583,6 +4583,42 @@ catch { }
 		return GetManualCooldownRemainingMs(ability);
 	}
 
+	// Emergency heals must not be attempted (or retargeted) while the spell is
+	// still cooling down. Timer DIDs give the exact remaining time; abilities
+	// without timer DIDs fall back to a conservative fixed recast guard.
+	private bool IsEmergencyHealReady(RotationAbility ability, DateTime utcNow)
+	{
+		if (ability == null || !ability.ReferenceDid.HasValue || ability.ReferenceDid.Value == 0)
+		{
+			return false;
+		}
+		if (ability.CooldownTimerDid1 == 0 && ability.CooldownTimerDid2 == 0 && ability.CooldownTimerDid3 == 0)
+		{
+			RefreshAbilityTimerDids(ability);
+		}
+		bool hasTimerDids = ability.CooldownTimerDid1 != 0 || ability.CooldownTimerDid2 != 0 || ability.CooldownTimerDid3 != 0;
+		if (hasTimerDids && GetEntityCooldownMs(ability) > 0L)
+		{
+			return false;
+		}
+		if (ability.LastFired != default(DateTime))
+		{
+			double sinceMs = (utcNow - ability.LastFired).TotalMilliseconds;
+			if (hasTimerDids)
+			{
+				if (sinceMs < 500.0)
+				{
+					return false;
+				}
+			}
+			else if (sinceMs < 1500.0)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private void RefreshAbilityTimerDids(RotationAbility ability)
 	{
 		try
@@ -4755,23 +4791,30 @@ catch { }
 		return false;
 	}
 
-	private bool FireAbility(RotationAbility ability, bool skipCooldown = false)
+	private bool FireAbility(RotationAbility ability, bool skipCooldown = false, ulong? targetId = null)
 	{
 		if (!skipCooldown && IsOnCooldown(ability))
 		{
 			return false;
 		}
-		ulong? selectedId = null;
-		try
+		ulong? selectedId = targetId;
+		if (selectedId.HasValue && selectedId.Value == 0)
 		{
-			ulong? selectedObjectId = _gameDataProvider?.GetSelectedObjectId();
-			if (selectedObjectId.HasValue && selectedObjectId.Value != 0)
-			{
-				selectedId = selectedObjectId;
-			}
+			selectedId = null;
 		}
-		catch
+		if (!selectedId.HasValue)
 		{
+			try
+			{
+				ulong? selectedObjectId = _gameDataProvider?.GetSelectedObjectId();
+				if (selectedObjectId.HasValue && selectedObjectId.Value != 0)
+				{
+					selectedId = selectedObjectId;
+				}
+			}
+			catch
+			{
+			}
 		}
 		if (EnsureInvokeSlot(ability))
 		{
@@ -5742,21 +5785,47 @@ catch { }
 			}
 			if (_pendingEmergencyTargetId.HasValue && _pendingEmergencyAbility != null)
 			{
+				RotationAbility emergencyAbility = _pendingEmergencyAbility;
+				ulong emergencyTargetId = _pendingEmergencyTargetId.Value;
+				ulong? emergencyRevertId = _pendingTargetRevertId;
 				try
 				{
-					if (FireAbility(_pendingEmergencyAbility, skipCooldown: true))
+					// InvokeHotbar/InvokeAction take the target as an argument, so no
+					// selection swap is needed. Only the legacy input-simulation path
+					// requires the target to be selected.
+					bool needsSelection = !EnsureInvokeSlot(emergencyAbility) && !(emergencyAbility.ReferenceDid.HasValue && emergencyAbility.ReferenceDid.Value != 0);
+					if (needsSelection)
 					{
-						_pendingEmergencyAbility.LastFired = utcNow;
-						Log("EMERGENCY HEAL [" + _pendingEmergencyAbility.Name + "]");
-						if (_pendingTargetRevertId.HasValue)
+						ulong? currentSelection = _gameDataProvider?.GetSelectedObjectId();
+						if (!currentSelection.HasValue || currentSelection.Value != emergencyTargetId)
+						{
+							_gameDataProvider?.SelectObject(emergencyTargetId);
+							emergencyRevertId = currentSelection;
+						}
+					}
+					if (FireAbility(emergencyAbility, skipCooldown: true, emergencyTargetId))
+					{
+						emergencyAbility.LastFired = utcNow;
+						Log($"EMERGENCY HEAL [{emergencyAbility.Name}] on {emergencyTargetId}" + (needsSelection ? " (via input simulation)" : " (no target swap)"));
+						if (needsSelection && emergencyRevertId.HasValue && emergencyRevertId.Value != emergencyTargetId)
+						{
+							_pendingTargetRevertId = emergencyRevertId;
 							_pendingTargetRevertTime = utcNow;
+						}
+						else
+						{
+							_pendingTargetRevertId = null;
+						}
 						_pendingEmergencyTargetId = null;
 						_pendingEmergencyAbility = null;
 					}
 					else
 					{
-						if (_pendingTargetRevertId.HasValue)
-							_gameDataProvider?.SelectObject(_pendingTargetRevertId.Value);
+						if (needsSelection && emergencyRevertId.HasValue)
+						{
+							_gameDataProvider?.SelectObject(emergencyRevertId.Value);
+						}
+						Log($"EMERGENCY HEAL [{emergencyAbility.Name}] not ready/refused - target left unchanged");
 						_pendingEmergencyTargetId = null;
 						_pendingEmergencyAbility = null;
 						_pendingTargetRevertId = null;
@@ -5765,11 +5834,16 @@ catch { }
 				catch (Exception ex)
 				{
 					Log("EMERGENCY FIRE ERROR: " + ex.Message);
+					if (emergencyRevertId.HasValue)
+					{
+						try { _gameDataProvider?.SelectObject(emergencyRevertId.Value); } catch { }
+					}
 					_pendingEmergencyTargetId = null;
 					_pendingEmergencyAbility = null;
+					_pendingTargetRevertId = null;
 				}
 			}
-			else if (_pendingTargetRevertId.HasValue && (utcNow - _pendingTargetRevertTime).TotalMilliseconds >= 1500.0)
+			else if (_pendingTargetRevertId.HasValue && (utcNow - _pendingTargetRevertTime).TotalMilliseconds >= 700.0)
 			{
 				_gameDataProvider?.SelectObject(_pendingTargetRevertId.Value);
 				Log("EMERGENCY HEAL reverted target");
@@ -5805,19 +5879,17 @@ catch { }
 								{
 									Log($"EMERGENCY SELF CHECK [{num4}] {rotationAbility2.Name}: auto={rotationAbility2.Autocast} ref={rotationAbility2.ReferenceDid} scope={rotationAbility2.HealScope} hp%={num3:F0} threshold={rotationAbility2.CooldownMs}");
 								}
-								if (rotationAbility2.Autocast && rotationAbility2.ReferenceDid.HasValue && rotationAbility2.ReferenceDid != 0 && (!(rotationAbility2.HealScope != "Self") || !(rotationAbility2.HealScope != "Both")) && !(utcNow - rotationAbility2.LastFired < TimeSpan.FromMilliseconds(500.0)) && rotationAbility2.CooldownMs > 0 && !(num3 > (double)rotationAbility2.CooldownMs))
+								if (rotationAbility2.Autocast && rotationAbility2.ReferenceDid.HasValue && rotationAbility2.ReferenceDid != 0 && (!(rotationAbility2.HealScope != "Self") || !(rotationAbility2.HealScope != "Both")) && IsEmergencyHealReady(rotationAbility2, utcNow) && rotationAbility2.CooldownMs > 0 && !(num3 > (double)rotationAbility2.CooldownMs))
 								{
-									ulong? num5 = _gameDataProvider?.GetSelectedObjectId();
 									ulong? num6 = _gameDataProvider?.GetCurrentCharacterId();
-									if (num6.HasValue && num5 != num6)
+									if (num6.HasValue)
 									{
-										_gameDataProvider?.SelectObject(num6.Value);
+										_pendingEmergencyTargetId = num6;
+										_pendingEmergencyAbility = rotationAbility2;
+										_pendingTargetRevertId = null;
+										Log($"EMERGENCY SELF [{num4}] HP={hitPoints_Current}/{hitPoints_Max} ({num3:F0}%) casting at self without changing target - will fire next tick");
+										goto IL_1bed;
 									}
-									_pendingEmergencyTargetId = num6;
-									_pendingEmergencyAbility = rotationAbility2;
-									_pendingTargetRevertId = ((num5.HasValue && num5.Value != num6) ? num5 : ((ulong?)null));
-									Log($"EMERGENCY SELF [{num4}] HP={hitPoints_Current}/{hitPoints_Max} ({num3:F0}%) targetting self - will fire next tick");
-									goto IL_1bed;
 								}
 							}
 						}
@@ -5859,7 +5931,7 @@ catch { }
 								array2[k] = num7;
 								Log($"PARTY COUNT [{k}] {rotationAbility3.Name}: {num7} below {rotationAbility3.PartyHpThreshold}% (need {rotationAbility3.PartyCountThreshold})");
 							}
-							Vector3? myPos = _currentEntity?.Location?.Position;
+							Vector3? myPos = GetWorldPosition(_currentEntity?.Location, _currentEntity?.Position);
 							Dictionary<string, ulong> partyEntityIds = new Dictionary<string, ulong>();
 							try
 							{
@@ -5876,7 +5948,7 @@ catch { }
 								{
 									continue;
 								}
-								if (_config.HealRange > 0.0 && myPos.HasValue && item4.Location?.Position is Vector3 pPos)
+								if (_config.HealRange > 0.0 && myPos.HasValue && GetWorldPosition(item4.Location, null) is Vector3 pPos)
 								{
 									double dx = myPos.Value.X - pPos.X;
 									double dy = myPos.Value.Y - pPos.Y;
@@ -5888,17 +5960,14 @@ catch { }
 								for (int num11 = 0; num11 < Emergency.Count; num11++)
 								{
 									RotationAbility rotationAbility4 = Emergency[num11];
-									if (rotationAbility4.Autocast && rotationAbility4.ReferenceDid.HasValue && rotationAbility4.ReferenceDid != 0 && (!(rotationAbility4.HealScope != "Party") || !(rotationAbility4.HealScope != "Both")) && rotationAbility4.PartyHpThreshold > 0 && !(utcNow - rotationAbility4.LastFired < TimeSpan.FromMilliseconds(500.0)) && !(num10 > (double)rotationAbility4.PartyHpThreshold) && (rotationAbility4.PartyCountThreshold <= 0 || array2[num11] >= rotationAbility4.PartyCountThreshold))
+									if (rotationAbility4.Autocast && rotationAbility4.ReferenceDid.HasValue && rotationAbility4.ReferenceDid != 0 && (!(rotationAbility4.HealScope != "Party") || !(rotationAbility4.HealScope != "Both")) && rotationAbility4.PartyHpThreshold > 0 && IsEmergencyHealReady(rotationAbility4, utcNow) && !(num10 > (double)rotationAbility4.PartyHpThreshold) && (rotationAbility4.PartyCountThreshold <= 0 || array2[num11] >= rotationAbility4.PartyCountThreshold))
 									{
 										if (!partyEntityIds.TryGetValue(item4.Name, out var instId))
 											continue;
-										ulong? curSel = _gameDataProvider?.GetSelectedObjectId();
-										if (curSel != instId)
-											_gameDataProvider?.SelectObject(instId);
 										_pendingEmergencyTargetId = instId;
 										_pendingEmergencyAbility = rotationAbility4;
-										_pendingTargetRevertId = (curSel.HasValue && curSel.Value != instId) ? curSel : null;
-										Log($"EMERGENCY PARTY targetting {item4.Name} HP={item4.HitPoints}/{item4.MaxHitPoints} ({num9:F1}% raw->{num10:F0}%) - will fire next tick");
+										_pendingTargetRevertId = null;
+										Log($"EMERGENCY PARTY targeting {item4.Name} HP={item4.HitPoints}/{item4.MaxHitPoints} ({num9:F1}% raw->{num10:F0}%) without changing target - will fire next tick");
 										goto IL_1bed;
 									}
 								}
@@ -6224,14 +6293,14 @@ catch { }
 											}
 										}
 										catch { }
-										Vector3? myPos2 = entity9?.Location?.Position;
+										Vector3? myPos2 = GetWorldPosition(entity9?.Location, entity9?.Position);
 										foreach (IPartyMember item7 in readOnlyList3)
 										{
 											if (!item7.IsValid() || !item7.Connected() || item7.HitPoints <= 0 || item7.MaxHitPoints <= 0)
 											{
 												continue;
 											}
-											if (_config.HealRange > 0.0 && myPos2.HasValue && item7.Location?.Position is Vector3 pPos2)
+											if (_config.HealRange > 0.0 && myPos2.HasValue && GetWorldPosition(item7.Location, null) is Vector3 pPos2)
 											{
 												double dx2 = myPos2.Value.X - pPos2.X;
 												double dy2 = myPos2.Value.Y - pPos2.Y;
@@ -6766,19 +6835,11 @@ catch { }
 
 	private const float LandblockSize = 192f;
 
-	// Positions are landblock-local; normalize to world space so distances are
-	// valid across cell/landblock borders. LandblockRaw == 0xFFFFFFFF means the
-	// object is too far away to be rendered (no reliable landblock).
-	private static Vector3? GetEntityWorldPosition(IEntity entity)
+	private static Vector3? GetWorldPosition(ILocation location, Vector3? fallback)
 	{
 		try
 		{
-			if (entity == null)
-			{
-				return null;
-			}
-			ILocation location = entity.Location;
-			Vector3? local = location?.Position ?? entity.Position;
+			Vector3? local = location?.Position ?? fallback;
 			if (!local.HasValue)
 			{
 				return null;
@@ -6794,6 +6855,18 @@ catch { }
 		{
 			return null;
 		}
+	}
+
+	// Positions are landblock-local; normalize to world space so distances are
+	// valid across cell/landblock borders. LandblockRaw == 0xFFFFFFFF means the
+	// object is too far away to be rendered (no reliable landblock).
+	private static Vector3? GetEntityWorldPosition(IEntity entity)
+	{
+		if (entity == null)
+		{
+			return null;
+		}
+		return GetWorldPosition(entity.Location, entity.Position);
 	}
 
 	// Anchor for the "Near" count: the selected hostile target when there is
