@@ -1168,6 +1168,12 @@ public class HotbarAbility
 
 	public uint CooldownTimerDid3 { get; set; }
 
+	public int School { get; set; } = 0;
+
+	public int SPCost { get; set; } = 0;
+
+	public uint ActionIcon { get; set; } = 0;
+
 	public string ApiTargetType { get; set; } = "";
 
 	public bool? ApiIsHarmful { get; set; }
@@ -1598,6 +1604,11 @@ public class ImGuiConfigWindow
 		{
 			ScanHotbarFromGame();
 		}
+		ImGuiNET.ImGui.SameLine();
+		if (ImGuiNET.ImGui.Button("Auto-Add Spells"))
+		{
+			AutoDiscoverSpells();
+		}
 		ImGuiNET.ImGui.EndChild();
 	}
 
@@ -1664,10 +1675,11 @@ public class ImGuiConfigWindow
 				config.AutoTargetMaxRange = range;
 				_plugin.SaveConfig();
 			}
-			bool smart = config.SmartOrder;
-			if (ImGuiNET.ImGui.Checkbox("Smart Order", ref smart))
+			float cluster = config.ClusterRadius;
+			ImGuiNET.ImGui.SetNextItemWidth(120f);
+			if (ImGuiNET.ImGui.InputFloat("Cluster Radius", ref cluster))
 			{
-				config.SmartOrder = smart;
+				config.ClusterRadius = cluster;
 				_plugin.SaveConfig();
 			}
 			double? targetDistance = _plugin.GetTargetDistance();
@@ -1747,7 +1759,6 @@ public class ImGuiConfigWindow
 			ImGuiNET.ImGui.TableSetupColumn("Near", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
 			ImGuiNET.ImGui.TableSetupColumn("HP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
 			ImGuiNET.ImGui.TableSetupColumn("SP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
-			ImGuiNET.ImGui.TableSetupColumn("Prio", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 58f);
 			ImGuiNET.ImGui.TableHeadersRow();
 			for (int i = 0; i < _plugin.Rotation.Count; i++)
 			{
@@ -1776,7 +1787,12 @@ public class ImGuiConfigWindow
 					bool overAbilityColumn = (mouse.X >= cellMin.X) && (mouse.X <= (cellMin.X + cellWidth));
 					if (overAbilityColumn && IsTextTruncated(abilityName, cellWidth))
 					{
-						ImGuiNET.ImGui.SetTooltip($"[{ability.KeyLabel}] {abilityName}");
+						string extra = "";
+						if (ability.School > 0 || ability.SPCost > 0)
+						{
+							extra = $"  (school={ability.School}, sp={ability.SPCost})";
+						}
+						ImGuiNET.ImGui.SetTooltip($"[{ability.KeyLabel}] {abilityName}{extra}");
 					}
 				}
 				ImGuiNET.ImGui.TableNextColumn();
@@ -1818,16 +1834,9 @@ public class ImGuiConfigWindow
 					ability.MinSpThreshold = Math.Clamp(sp, 0, 100);
 					_plugin.SaveRotation();
 				}
-				ImGuiNET.ImGui.TableNextColumn();
-				int prio = ability.Priority;
-				ImGuiNET.ImGui.SetNextItemWidth(-1f);
-				if (ImGuiNET.ImGui.InputInt("##prio", ref prio))
-				{
-					ability.Priority = Math.Max(0, prio);
-					_plugin.SaveRotation();
-				}
-				ImGuiNET.ImGui.PopID();
-			}
+			ImGuiNET.ImGui.TableNextColumn();
+			ImGuiNET.ImGui.PopID();
+		}
 			ImGuiNET.ImGui.EndTable();
 		}
 		_ = removeAt;
@@ -2779,6 +2788,8 @@ public class ImGuiConfigWindow
 		rotationAbility.CooldownTimerDid1 = hotbar.CooldownTimerDid1;
 		rotationAbility.CooldownTimerDid2 = hotbar.CooldownTimerDid2;
 		rotationAbility.CooldownTimerDid3 = hotbar.CooldownTimerDid3;
+		rotationAbility.School = hotbar.School;
+		rotationAbility.SPCost = hotbar.SPCost;
 		rotationAbility.CommandValue = ((hotbar.CommandValue != 0) ? new uint?(hotbar.CommandValue) : null);
 		rotationAbility.ReferenceDid = ((hotbar.ReferenceDid != 0) ? new uint?(hotbar.ReferenceDid) : null);
 		rotationAbility.InvokeBar = ((uint)hotbar.BarId);
@@ -2811,9 +2822,56 @@ public class ImGuiConfigWindow
 		{
 			_statusMessage = "Scan failed: " + ex.Message;
 		}
-	}
+		}
 
-	private static void FillCooldownFromScan(RotationAbility ability, List<HotbarAbility> results)
+		private void AutoDiscoverSpells()
+		{
+			try
+			{
+				List<HotbarAbility> scanned = _plugin.ScanHotbar();
+				if (scanned == null || scanned.Count == 0)
+				{
+					_statusMessage = "No hotbar spells found";
+					return;
+				}
+				HashSet<uint> existingDids = new HashSet<uint>();
+				HashSet<string> existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				foreach (RotationAbility ra in _plugin.Rotation)
+				{
+					if (ra.ReferenceDid.HasValue && ra.ReferenceDid.Value != 0) existingDids.Add(ra.ReferenceDid.Value);
+					if (!string.IsNullOrEmpty(ra.Name)) existingNames.Add(ra.Name);
+				}
+				int added = 0;
+				foreach (HotbarAbility hb in scanned)
+				{
+					if (hb == null || hb.ReferenceDid == 0) continue;
+					if (existingDids.Contains(hb.ReferenceDid)) continue;
+					if (!string.IsNullOrEmpty(hb.Name) && existingNames.Contains(hb.Name)) continue;
+					RotationAbility ability = BuildAbilityFromHotbar(hb);
+					_plugin.EnrichFromApi(ability);
+					ability.Autocast = false;
+					_plugin.Rotation.Add(ability);
+					existingDids.Add(hb.ReferenceDid);
+					if (!string.IsNullOrEmpty(hb.Name)) existingNames.Add(hb.Name);
+					added++;
+				}
+				if (added > 0)
+				{
+					_plugin.SaveRotation();
+					_statusMessage = $"Auto-added {added} spell(s)";
+				}
+				else
+				{
+					_statusMessage = "No new spells to add";
+				}
+			}
+			catch (Exception ex)
+			{
+				_statusMessage = "Auto-add failed: " + ex.Message;
+			}
+		}
+
+		private static void FillCooldownFromScan(RotationAbility ability, List<HotbarAbility> results)
 	{
 		if (ability.CooldownMs <= 0 && ability.ReferenceDid.HasValue && ability.ReferenceDid.Value != 0)
 		{
@@ -2889,7 +2947,9 @@ public class RotationAbility
 
 	public uint CooldownTimerDid3 { get; set; }
 
-	public int PartyHpThreshold { get; set; } = 0;
+	public int School { get; set; } = 0;
+
+	public int SPCost { get; set; } = 0;
 
 	public int PartyCountThreshold { get; set; } = 0;
 
@@ -2906,6 +2966,8 @@ public class RotationAbility
 	public int MinNearbyEnemies { get; set; } = 0;
 
 	public int TargetHpThreshold { get; set; } = 0;
+
+	public int PartyHpThreshold { get; set; } = 0;
 
 	public int MinSpThreshold { get; set; } = 0;
 
@@ -2980,6 +3042,10 @@ public class RotationConfig
 	public bool AutoTargetClosestEnemy { get; set; } = false;
 
 	public float AutoTargetMaxRange { get; set; } = 200f;
+
+	public float ClusterRadius { get; set; } = 10f;
+
+	public int AoeThreshold { get; set; } = 2;
 
 	public bool DamageMeterEnabled { get; set; } = false;
 
@@ -4746,6 +4812,23 @@ catch { }
 			return candidates[0];
 		}
 		DateTime utcNow = DateTime.UtcNow;
+		// Pack detection: when a clustered pack is present (clustered count >= AoeThreshold),
+		// prefer abilities that require multiple nearby enemies (MinNearbyEnemies > 0).
+		bool pack = false;
+		try
+		{
+			int thr = (_config != null && _config.AoeThreshold > 0) ? _config.AoeThreshold : 2;
+			pack = CountClusteredEnemies() >= thr;
+		}
+		catch { }
+		if (pack)
+		{
+			var packFirst = candidates.Where(a => a.MinNearbyEnemies > 0).ToList();
+			if (packFirst.Count > 0)
+			{
+				candidates = packFirst;
+			}
+		}
 		return (from a in candidates
 			orderby a.Priority descending, (utcNow - a.LastFired).TotalMilliseconds descending
 			select a).First();
@@ -5207,6 +5290,38 @@ catch { }
 					}
 				}
 				string text7 = ((!string.IsNullOrEmpty(text)) ? SimplifyName(text) : "Unknown");
+				// Phase 3: spell metadata from weenie + SpellMasterProp (master spell)
+				int numSchool = 0;
+				int numSpCost = 0;
+				uint numActionIcon = 0;
+				try
+				{
+					IPropertyCollection weenieProps2 = null;
+					try { weenieProps2 = gameDataProvider?.GetWeenieProperties(referenceDid); } catch { }
+					IPropertyCollection masterProps2 = null;
+					try
+					{
+						IProperty spmProp = weenieProps2?.GetProperty(268440011u);
+						int spm = 0;
+						if (spmProp is IInt32Property { Int32Value: var spmIv } && spmIv.HasValue) { spm = spmIv.Value; }
+						else if (spmProp is IUInt32Property { UInt32Value: var spmUv } && spmUv.HasValue) { spm = (int)spmUv.Value; }
+						if (spm > 0) { masterProps2 = gameDataProvider?.GetWeenieProperties((uint)spm); }
+					}
+					catch { }
+					IPropertyCollection srcProps = masterProps2 ?? weenieProps2;
+					if (srcProps != null)
+					{
+						IProperty pSch = srcProps.GetProperty(268437596u);
+						if (pSch is IInt32Property { Int32Value: var sv } && sv.HasValue) { numSchool = sv.Value; }
+						else if (pSch is IUInt32Property { UInt32Value: var suv } && suv.HasValue) { numSchool = (int)suv.Value; }
+						IProperty pSp = srcProps.GetProperty(268443833u);
+						if (pSp is IInt32Property { Int32Value: var spv } && spv.HasValue) { numSpCost = spv.Value; }
+						else if (pSp is IUInt32Property { UInt32Value: var spuv } && spuv.HasValue) { numSpCost = (int)spuv.Value; }
+						IProperty pIc = srcProps.GetProperty(268442192u);
+						if (pIc is IUInt32Property { UInt32Value: var aiv } && aiv.HasValue) { numActionIcon = aiv.Value; }
+					}
+				}
+				catch { }
 				long num5 = DetectCooldownFromDescription(referenceDid);
 				long num6 = LookupBuffDurationFromTable(text7);
 				uint num7 = 0u;
@@ -5304,7 +5419,10 @@ catch { }
 					BuffDurationMs = num6,
 					CooldownTimerDid1 = num7,
 					CooldownTimerDid2 = num8,
-					CooldownTimerDid3 = num9
+					CooldownTimerDid3 = num9,
+					School = numSchool,
+					SPCost = numSpCost,
+					ActionIcon = numActionIcon
 				});
 				Log($"ScanHotbar: Bar{bar + 1} Slot{slot + 1} -> [{text7}] cmd=0x{inputAction.Value:X8} did=0x{referenceDid:X8} cd={((num5 > 0) ? $"{(double)num5 / 1000.0:F1}s" : "?")} dur={((num6 > 0) ? $"{(double)num6 / 1000.0:F0}s" : "?")}");
 			}
@@ -6088,19 +6206,20 @@ catch { }
 					if (rotationAbility5.MinNearbyEnemies > 0)
 					{
 						int num13 = CountNearbyEnemies();
-						if (num13 < rotationAbility5.MinNearbyEnemies)
+						int numCluster = CountClusteredEnemies();
+						if (numCluster < rotationAbility5.MinNearbyEnemies)
 						{
 							if ((utcNow - _lastNearbyLogTime).TotalSeconds >= 1.0)
 							{
 								_lastNearbyLogTime = utcNow;
-								Log($"MIN NEARBY [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
+								Log($"MIN NEARBY [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} clustered={numCluster} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
 							}
 							continue;
 						}
 						if ((utcNow - _lastNearbyOkLogTime).TotalSeconds >= 2.0)
 						{
 							_lastNearbyOkLogTime = utcNow;
-							Log($"MIN NEARBY OK [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
+							Log($"MIN NEARBY OK [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} clustered={numCluster} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
 						}
 					}
 					if (rotationAbility5.TargetHpThreshold > 0)
@@ -6143,11 +6262,11 @@ catch { }
 						list.Add(rotationAbility5);
 					}
 				}
-				RotationAbility rotationAbility6 = (_config.SmartOrder ? PickBestAbility(list) : list.OrderBy(a => a.LastFired).FirstOrDefault());
+				RotationAbility rotationAbility6 = list.FirstOrDefault();
 				if (rotationAbility6 != null && FireAbility(rotationAbility6, skipCooldown: true))
 				{
 					rotationAbility6.LastFired = utcNow;
-					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name + (_config.SmartOrder ? " (smart)" : ""));
+					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name);
 				}
 			}
 			goto IL_1bed;
@@ -6628,7 +6747,7 @@ catch { }
 			{
 				foreach (IEntity item in readOnlyCollection)
 				{
-					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || item.HitPoints_Current.GetValueOrDefault() <= 0)
+					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
 					{
 						continue;
 					}
@@ -6647,7 +6766,7 @@ catch { }
 			if (entity2 == null)
 			{
 				IEntity entity3 = _selectedObject;
-				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsHostileEntity(entity3) && entity3.HitPoints_Current.GetValueOrDefault() > 0)
+				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsHostileEntity(entity3) && (!entity3.HitPoints_Current.HasValue || entity3.HitPoints_Current.Value > 0))
 				{
 					Vector3? vector2 = entity3.Location?.Position;
 					if (vector2.HasValue)
@@ -6690,7 +6809,7 @@ catch { }
 			{
 				foreach (IEntity item in readOnlyCollection)
 				{
-					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || item.HitPoints_Current.GetValueOrDefault() <= 0)
+					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
 					{
 						continue;
 					}
@@ -6709,7 +6828,7 @@ catch { }
 			if (entity2 == null)
 			{
 				IEntity entity3 = _selectedObject;
-				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsHostileEntity(entity3) && entity3.HitPoints_Current.GetValueOrDefault() > 0)
+				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsHostileEntity(entity3) && (!entity3.HitPoints_Current.HasValue || entity3.HitPoints_Current.Value > 0))
 				{
 					Vector3? vector2 = entity3.Location?.Position;
 					if (vector2.HasValue)
@@ -6989,7 +7108,90 @@ catch { }
 		}
 	}
 
-	// Enemies that count toward the "Near" column. Stricter than IsHostileEntity:
+		// Clustered enemy count: how many counted enemies are within ClusterRadius of the
+		// densest center. Used for AoE gating so spread-out packs don't trigger AoE abilities.
+		internal int CountClusteredEnemies()
+		{
+			try
+			{
+				IEntity current = _currentEntity;
+				IEntity anchor = GetNearbyCountAnchor(current);
+				Vector3? anchorPos = GetEntityWorldPosition(anchor);
+				if (anchor == null || !anchorPos.HasValue)
+				{
+					return 0;
+				}
+				double nearRadius = NearbyEnemyCountRadius;
+				double clusterRadius = (_config != null && _config.ClusterRadius > 0) ? _config.ClusterRadius : 10.0;
+				IReadOnlyList<IEntity> snapshot = GetEntitiesSnapshot();
+				if (snapshot == null || snapshot.Count == 0)
+				{
+					return 0;
+				}
+				List<Vector3> points = new List<Vector3>();
+				// anchor itself counts as a point if it's a counted enemy
+				if (anchor != current && IsCountedEnemy(anchor))
+				{
+					points.Add(anchorPos.Value);
+				}
+				ulong anchorId = anchor.InstanceId;
+				HashSet<ulong> seen = new HashSet<ulong>();
+				foreach (IEntity item in snapshot)
+				{
+					if (item == null)
+					{
+						continue;
+					}
+					if (item.InstanceId != 0UL && !seen.Add(item.InstanceId))
+					{
+						continue;
+					}
+					if (anchorId != 0UL && item.InstanceId == anchorId)
+					{
+						continue;
+					}
+					if (!IsCountedEnemy(item))
+					{
+						continue;
+					}
+					Vector3? vp = GetEntityWorldPosition(item);
+					if (!vp.HasValue)
+					{
+						continue;
+					}
+					if (Distance(anchorPos.Value, vp.Value) > nearRadius)
+					{
+						continue;
+					}
+					points.Add(vp.Value);
+				}
+				if (points.Count == 0)
+				{
+					return 0;
+				}
+				int maxCluster = 0;
+				foreach (Vector3 center in points)
+				{
+					int c = 0;
+					foreach (Vector3 p in points)
+					{
+						if (Distance(center, p) <= clusterRadius)
+						{
+							c++;
+						}
+					}
+					if (c > maxCluster)
+					{
+						maxCluster = c;
+					}
+				}
+				return maxCluster;
+			}
+			catch
+			{
+				return 0;
+			}
+		}
 	// destructibles (barrels, crates, collectables) are not enemies for AoE gating.
 	private bool IsCountedEnemy(IEntity entity)
 	{
@@ -7093,7 +7295,7 @@ catch { }
 			}
 			nearest.Sort((a, b) => a.Dist.CompareTo(b.Dist));
 			string text = string.Join(", ", nearest.Take(6).Select(x => $"{x.Text}@{x.Dist:F0}u"));
-			return $"census anchor={anchorName} radius={num:F0} entities={total} withPos={withPos} alive={alive} hostileInRange={CountNearbyEnemies()} near=[{text}]";
+			return $"census anchor={anchorName} radius={num:F0} entities={total} withPos={withPos} alive={alive} hostileInRange={CountNearbyEnemies()} clustered={CountClusteredEnemies()} near=[{text}]";
 		}
 		catch (Exception ex)
 		{
