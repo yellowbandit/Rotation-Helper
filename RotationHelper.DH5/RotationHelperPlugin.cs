@@ -3154,6 +3154,8 @@ catch { }
 	private bool _autoAttackWasFiredThisZone;
 
 	private DateTime _lastAutoTargetCheck = DateTime.MinValue;
+	private DateTime _lastNearbyLogTime = DateTime.MinValue;
+	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
 
 	private ulong? _pendingEmergencyTargetId;
 
@@ -3414,19 +3416,9 @@ catch { }
 		{
 			return false;
 		}
-		IProperty property = selectedObject.GetProperty(268437503u);
-		if (property?.Value != null)
+		if (ReadPropertyBool(selectedObject.GetProperty(268437503u)) == true)
 		{
-			try
-			{
-				if (Convert.ToBoolean(property))
-				{
-					return true;
-				}
-			}
-			catch
-			{
-			}
+			return true;
 		}
 		IProperty property2 = selectedObject.GetProperty(268435581u);
 		if (property2?.Value != null)
@@ -5821,6 +5813,11 @@ catch { }
 						IDdoGameDataProvider gameDataProvider = _gameDataProvider;
 						if (gameDataProvider != null && !IsHostileOrBreakable(gameDataProvider))
 						{
+							if ((utcNow - _lastNoTargetLogTime).TotalSeconds >= 2.0)
+							{
+								_lastNoTargetLogTime = utcNow;
+								Log($"NO HOSTILE TARGET — rotation held (selected={_selectedObject?.Name ?? "none"})");
+							}
 							continue;
 						}
 					}
@@ -5829,7 +5826,11 @@ catch { }
 						int num13 = CountNearbyEnemies();
 						if (num13 < rotationAbility5.MinNearbyEnemies)
 						{
-							Log($"MIN NEARBY [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} need={rotationAbility5.MinNearbyEnemies}");
+							if ((utcNow - _lastNearbyLogTime).TotalSeconds >= 1.0)
+							{
+								_lastNearbyLogTime = utcNow;
+								Log($"MIN NEARBY [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — nearby={num13} need={rotationAbility5.MinNearbyEnemies} — {DescribeNearbyCensus()}");
+							}
 							continue;
 						}
 					}
@@ -6464,11 +6465,65 @@ catch { }
 		}
 	}
 
+	private static bool? ReadPropertyBool(IProperty property)
+	{
+		if (property?.Value == null)
+		{
+			return null;
+		}
+		try
+		{
+			if (property.Value is bool b)
+			{
+				return b;
+			}
+			if (property.Value is IConvertible)
+			{
+				return Convert.ToBoolean(property.Value);
+			}
+		}
+		catch
+		{
+		}
+		return null;
+	}
+
+	private static long? ReadPropertyLong(IProperty property)
+	{
+		if (property?.Value == null)
+		{
+			return null;
+		}
+		try
+		{
+			if (property.Value is string s)
+			{
+				return long.TryParse(s, out long parsed) ? parsed : (long?)null;
+			}
+			if (property.Value is IConvertible)
+			{
+				return Convert.ToInt64(property.Value);
+			}
+		}
+		catch
+		{
+		}
+		return null;
+	}
+
 	private bool IsHostileEntity(IEntity entity)
 	{
 		try
 		{
+			if (entity == null || entity.InstanceId == 0L || entity.IsDeleted)
+			{
+				return false;
+			}
 			if (entity.InstanceId == _gameDataProvider?.GetCurrentCharacterId().GetValueOrDefault())
+			{
+				return false;
+			}
+			if (entity.HitPoints_Current.GetValueOrDefault() <= 0)
 			{
 				return false;
 			}
@@ -6480,16 +6535,37 @@ catch { }
 					return false;
 				}
 			}
-			IProperty property = entity.GetProperty(268437503u);
-			if (property != null && property != null && Convert.ToBoolean(property))
+			// DH5 SDK: IProperty is not IConvertible, so Convert.ToBoolean(property) always threw.
+			if (ReadPropertyBool(entity.GetProperty(268437503u)) == true)
 			{
 				return true;
 			}
-			IProperty property2 = entity.GetProperty(268435581u);
-			if (property2 != null && property2.Value != null && Convert.ToInt32(property2.Value) > 0)
+			long? attackable = ReadPropertyLong(entity.GetProperty(268435581u));
+			if (attackable.HasValue)
+			{
+				return attackable.Value > 0;
+			}
+			uint? weenieType = entity.WeeniePropertyCollection?.GetEnumProperty(287u)?.UInt32Value;
+			if (weenieType == 1245313)
 			{
 				return true;
 			}
+			if (weenieType.HasValue)
+			{
+				switch ((WeenieType)weenieType.Value)
+				{
+				case WeenieType.Trap:
+				case WeenieType.Chest:
+				case WeenieType.Door:
+				case WeenieType.Collectable:
+				case WeenieType.Henchman:
+				case WeenieType.Restpoint:
+				case WeenieType.Mount:
+				case WeenieType.CosmeticPet:
+					return false;
+				}
+			}
+			return entity.HitPoints_Max.GetValueOrDefault() > 0;
 		}
 		catch
 		{
@@ -6533,11 +6609,11 @@ catch { }
 		try
 		{
 			IEntity entity = _currentEntity;
-			if (entity == null || !(entity.Location?.Position).HasValue)
+			Vector3? myPos = entity?.Location?.Position ?? entity?.Position;
+			if (entity == null || !myPos.HasValue)
 			{
 				return 0;
 			}
-			Vector3 value = entity.Location.Position.Value;
 			double num = (((double)_config.AutoTargetMaxRange > 0.0) ? ((double)_config.AutoTargetMaxRange) : 40.0);
 			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
 			if (readOnlyCollection == null || readOnlyCollection.Count == 0)
@@ -6547,18 +6623,14 @@ catch { }
 			int num2 = 0;
 			foreach (IEntity item in readOnlyCollection)
 			{
-				if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || item.HitPoints_Current.GetValueOrDefault() <= 0)
+				if (!IsHostileEntity(item))
 				{
 					continue;
 				}
-				Vector3? vector = item.Location?.Position;
-				if (vector.HasValue)
+				Vector3? vector = item.Location?.Position ?? item.Position;
+				if (vector.HasValue && Distance(myPos.Value, vector.Value) <= num)
 				{
-					double num3 = Distance(value, vector.Value);
-					if (num3 <= num)
-					{
-						num2++;
-					}
+					num2++;
 				}
 			}
 			return num2;
@@ -6566,6 +6638,52 @@ catch { }
 		catch
 		{
 			return 0;
+		}
+	}
+
+	// Diagnostic: explains why a "Near" (MinNearbyEnemies) ability is being blocked.
+	internal string DescribeNearbyCensus()
+	{
+		try
+		{
+			IEntity entity = _currentEntity;
+			Vector3? myPos = entity?.Location?.Position ?? entity?.Position;
+			double num = (((double)_config.AutoTargetMaxRange > 0.0) ? ((double)_config.AutoTargetMaxRange) : 40.0);
+			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
+			int total = readOnlyCollection?.Count ?? 0;
+			int withPos = 0;
+			int alive = 0;
+			List<(double Dist, string Text)> nearest = new List<(double, string)>();
+			if (readOnlyCollection != null && myPos.HasValue)
+			{
+				foreach (IEntity item in readOnlyCollection)
+				{
+					if (item == null)
+					{
+						continue;
+					}
+					Vector3? vector = item.Location?.Position ?? item.Position;
+					if (!vector.HasValue)
+					{
+						continue;
+					}
+					withPos++;
+					if (item.HitPoints_Current.GetValueOrDefault() <= 0)
+					{
+						continue;
+					}
+					alive++;
+					uint? weenieType = item.WeeniePropertyCollection?.GetEnumProperty(287u)?.UInt32Value;
+					nearest.Add((Distance(myPos.Value, vector.Value), $"{item.Name}[wt=0x{weenieType.GetValueOrDefault():X}]"));
+				}
+			}
+			nearest.Sort((a, b) => a.Dist.CompareTo(b.Dist));
+			string text = string.Join(", ", nearest.Take(6).Select(x => $"{x.Text}@{x.Dist:F0}u"));
+			return $"census radius={num:F0} entities={total} withPos={withPos} alive={alive} hostileInRange={CountNearbyEnemies()} near=[{text}]";
+		}
+		catch (Exception ex)
+		{
+			return "census failed: " + ex.Message;
 		}
 	}
 
