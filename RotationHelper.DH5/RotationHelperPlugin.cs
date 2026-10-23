@@ -5946,7 +5946,7 @@ catch { }
 							{
 								foreach (IEntity e in GetEntitiesSnapshot())
 								{
-									if (!string.IsNullOrEmpty(e.Name))
+									if (e != null && !string.IsNullOrEmpty(e.Name))
 										partyEntityIds[e.Name] = e.InstanceId;
 								}
 							}
@@ -5960,6 +5960,21 @@ catch { }
 									continue;
 								}
 								bool hasEntityMatch = partyEntityIds.TryGetValue(item4.Name, out var instId);
+								if (!hasEntityMatch && item4.Id != 0UL)
+								{
+									try
+									{
+										IEntity entById = _gameDataProvider?.GetEntityAsync(item4.Id).ConfigureAwait(false).GetAwaiter().GetResult();
+										if (entById != null)
+										{
+											instId = entById.InstanceId != 0UL ? entById.InstanceId : item4.Id;
+											if (!string.IsNullOrEmpty(entById.Name))
+												partyEntityIds[entById.Name] = instId;
+											hasEntityMatch = true;
+										}
+									}
+									catch { }
+								}
 								if (verbose)
 								{
 									Log($"PARTY MEMBER [{item4.Name}] {item4.HitPoints}/{item4.MaxHitPoints} id={item4.Id} entity={(hasEntityMatch ? instId.ToString() : "none")}");
@@ -5983,15 +5998,23 @@ catch { }
 									RotationAbility rotationAbility4 = Emergency[num11];
 									if (rotationAbility4.Autocast && rotationAbility4.ReferenceDid.HasValue && rotationAbility4.ReferenceDid != 0 && (!(rotationAbility4.HealScope != "Party") || !(rotationAbility4.HealScope != "Both")) && rotationAbility4.PartyHpThreshold > 0 && IsEmergencyHealReady(rotationAbility4, utcNow) && !(num10 > (double)rotationAbility4.PartyHpThreshold) && (rotationAbility4.PartyCountThreshold <= 0 || array2[num11] >= rotationAbility4.PartyCountThreshold))
 									{
-										if (!hasEntityMatch)
-										{
-											instId = item4.Id;
-											Log($"EMERGENCY PARTY [{item4.Name}] no nearby entity match - using party id {instId}");
-										}
-										_pendingEmergencyTargetId = instId;
-										_pendingEmergencyAbility = rotationAbility4;
-										_pendingTargetRevertId = null;
-										Log($"EMERGENCY PARTY targeting {item4.Name} HP={item4.HitPoints}/{item4.MaxHitPoints} ({num9:F1}% raw->{num10:F0}%) without changing target - will fire next tick");
+									if (!hasEntityMatch)
+									{
+										instId = item4.Id;
+										Log($"EMERGENCY PARTY [{item4.Name}] no nearby entity match - using party id {instId}");
+									}
+									else if (instId == 0UL && item4.Id != 0UL)
+									{
+										instId = item4.Id;
+									}
+									if (instId == 0UL)
+									{
+										continue;
+									}
+									_pendingEmergencyTargetId = instId;
+									_pendingEmergencyAbility = rotationAbility4;
+									_pendingTargetRevertId = null;
+									Log($"EMERGENCY PARTY targeting {item4.Name} HP={item4.HitPoints}/{item4.MaxHitPoints} ({num9:F1}% raw->{num10:F0}%) without changing target - will fire next tick targetId={instId}");
 										goto IL_1bed;
 									}
 								}
