@@ -2767,6 +2767,8 @@ public class ImGuiConfigWindow
 		rotationAbility.CooldownTimerDid3 = hotbar.CooldownTimerDid3;
 		rotationAbility.CommandValue = ((hotbar.CommandValue != 0) ? new uint?(hotbar.CommandValue) : null);
 		rotationAbility.ReferenceDid = ((hotbar.ReferenceDid != 0) ? new uint?(hotbar.ReferenceDid) : null);
+		rotationAbility.InvokeBar = ((uint)hotbar.BarId);
+		rotationAbility.InvokeSlot = ((uint)hotbar.SlotId);
 		return rotationAbility;
 	}
 
@@ -2834,6 +2836,12 @@ public class RotationAbility
 {
 	[JsonIgnore]
 	internal int CachedHotbarIndex { get; set; } = -1;
+
+	[JsonIgnore]
+	internal uint? InvokeBar { get; set; }
+
+	[JsonIgnore]
+	internal uint? InvokeSlot { get; set; }
 
 	public string Name { get; set; }
 
@@ -3569,6 +3577,8 @@ catch { }
 			if (!ability.ReferenceDid.HasValue || ability.ReferenceDid.Value == 0)
 			{
 				ability.ReferenceDid = did;
+				ability.InvokeBar = null;
+				ability.InvokeSlot = null;
 				Log($"DatAPI: set ReferenceDid 0x{did:X8} for [{ability.Name}]");
 			}
 			HttpResponseMessage resp = await new HttpClient { BaseAddress = new Uri(DatApiBase), Timeout = TimeSpan.FromSeconds(3) }.GetAsync($"/DbProperties/0x{did:X8}").ConfigureAwait(false);
@@ -3752,6 +3762,8 @@ catch { }
 					if (text2 == text)
 					{
 						ability.ReferenceDid = hotbarSlot.ReferenceDid;
+						ability.InvokeBar = hotbarSlot.Bar;
+						ability.InvokeSlot = hotbarSlot.Slot;
 						Log($"Toggle slot: [{ability.Name}] found at Bar{hotbarSlot.Bar + 1} Slot{hotbarSlot.Slot + 1} — ReferenceDid=0x{hotbarSlot.ReferenceDid:X8}");
 						return;
 					}
@@ -3764,6 +3776,8 @@ catch { }
 				if (match != null && match.Id > 0)
 				{
 					ability.ReferenceDid = (uint)match.Id;
+					ability.InvokeBar = null;
+					ability.InvokeSlot = null;
 					Log($"Toggle slot: [{ability.Name}] found via DatAPI — DID=0x{match.Id:X8}");
 				}
 			}
@@ -4669,11 +4683,103 @@ catch { }
 			select a).First();
 	}
 
+	internal static uint CanonicalDid(uint did)
+	{
+		return did & 0xF6FFFFFFu;
+	}
+
+	private bool EnsureInvokeSlot(RotationAbility ability)
+	{
+		if (ability == null || !ability.ReferenceDid.HasValue || ability.ReferenceDid.Value == 0)
+		{
+			return false;
+		}
+		if (ability.InvokeBar.HasValue && ability.InvokeSlot.HasValue)
+		{
+			return true;
+		}
+		try
+		{
+			IHotbarSlot[] array = _gameDataProvider?.GetHotbarMap();
+			if (array == null)
+			{
+				return false;
+			}
+			uint value = CanonicalDid(ability.ReferenceDid.Value);
+			foreach (IHotbarSlot hotbarSlot in array)
+			{
+				if (hotbarSlot == null || hotbarSlot.ShortcutType == 0 || hotbarSlot.ReferenceDid == 0)
+				{
+					continue;
+				}
+				if (CanonicalDid(hotbarSlot.ReferenceDid) != value)
+				{
+					continue;
+				}
+				if (!hotbarSlot.GetInputAction().HasValue)
+				{
+					continue;
+				}
+				ability.InvokeBar = hotbarSlot.Bar;
+				ability.InvokeSlot = hotbarSlot.Slot;
+				return true;
+			}
+		}
+		catch (Exception ex)
+		{
+			Log("EnsureInvokeSlot failed: " + ex.Message);
+		}
+		return false;
+	}
+
 	private bool FireAbility(RotationAbility ability, bool skipCooldown = false)
 	{
 		if (!skipCooldown && IsOnCooldown(ability))
 		{
 			return false;
+		}
+		ulong? selectedId = null;
+		try
+		{
+			ulong? selectedObjectId = _gameDataProvider?.GetSelectedObjectId();
+			if (selectedObjectId.HasValue && selectedObjectId.Value != 0)
+			{
+				selectedId = selectedObjectId;
+			}
+		}
+		catch
+		{
+		}
+		if (EnsureInvokeSlot(ability))
+		{
+			try
+			{
+				if (_gameDataProvider.InvokeHotbar(ability.InvokeBar.Value, ability.InvokeSlot.Value, selectedId))
+				{
+					ability.LastFired = DateTime.UtcNow;
+					Log($"FIRE [{ability.KeyLabel}] {ability.Name} via InvokeHotbar(Bar{ability.InvokeBar.Value + 1} Slot{ability.InvokeSlot.Value + 1}, target={(selectedId.HasValue ? selectedId.Value.ToString() : "none")})");
+					return true;
+				}
+				Log($"InvokeHotbar refused [{ability.KeyLabel}] {ability.Name} (Bar{ability.InvokeBar.Value + 1} Slot{ability.InvokeSlot.Value + 1}) - falling back");
+			}
+			catch (Exception ex)
+			{
+				Log("InvokeHotbar failed: " + ex.Message + " - falling back");
+			}
+		}
+		if (ability.ReferenceDid.HasValue && ability.ReferenceDid.Value != 0)
+		{
+			try
+			{
+				_gameDataProvider.InvokeAction(CanonicalDid(ability.ReferenceDid.Value), selectedId.GetValueOrDefault());
+				ability.LastFired = DateTime.UtcNow;
+				Log($"FIRE [{ability.KeyLabel}] {ability.Name} via InvokeAction(0x{CanonicalDid(ability.ReferenceDid.Value):X8}, target={selectedId.GetValueOrDefault()})");
+				return true;
+			}
+			catch (Exception ex)
+			{
+				Log("InvokeAction failed: " + ex.Message + " - falling back to input simulation");
+			}
 		}
 		if (ability.CommandValue.HasValue && ability.CommandValue.Value != 0)
 		{
@@ -4701,7 +4807,7 @@ catch { }
 				return true;
 			}
 		}
-		Log($"SKIP [{ability.KeyLabel}] {ability.Name} - no CommandValue or VirtualKey");
+		Log($"SKIP [{ability.KeyLabel}] {ability.Name} - no hotbar slot, ReferenceDid, CommandValue or VirtualKey");
 		return false;
 	}
 
@@ -5487,14 +5593,14 @@ catch { }
 					}
 					if (hotbarSlot != null)
 					{
-						uint? inputAction = hotbarSlot.GetInputAction();
-						if (inputAction.HasValue && inputAction.Value != 0)
+						rotationAbility.InvokeBar = hotbarSlot.Bar;
+						rotationAbility.InvokeSlot = hotbarSlot.Slot;
+						if (FireAbility(rotationAbility, skipCooldown: true))
 						{
-							_gameDataProvider?.SendInput(inputAction.Value);
 							rotationAbility.LastFired = utcNow;
 							_lastHotbarUsageTime = utcNow;
 							_sessionToggleFired.Add(value);
-							Log($"TOGGLE [{i}] [{rotationAbility.KeyLabel}] {rotationAbility.Name} — fired via hotbar");
+							Log($"TOGGLE [{i}] [{rotationAbility.KeyLabel}] {rotationAbility.Name} — fired");
 						}
 					}
 				}
