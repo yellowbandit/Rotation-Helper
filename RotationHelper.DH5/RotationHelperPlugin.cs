@@ -4444,7 +4444,17 @@ catch { }
 		{
 			return true;
 		}
-		return false;
+		return GetManualCooldownRemainingMs(ability) > 0L;
+	}
+
+	private static long GetManualCooldownRemainingMs(RotationAbility ability)
+	{
+		if (ability == null || ability.CooldownMs <= 0L || ability.LastFired == default(DateTime))
+		{
+			return 0L;
+		}
+		double remaining = (double)ability.CooldownMs - (DateTime.UtcNow - ability.LastFired).TotalMilliseconds;
+		return (remaining > 0.0) ? (long)remaining : 0L;
 	}
 
 	private long GetEntityCooldownMs(RotationAbility ability)
@@ -4557,7 +4567,12 @@ catch { }
 		{
 			RefreshAbilityTimerDids(ability);
 		}
-		return GetEntityCooldownMs(ability);
+		long entityCooldownMs = GetEntityCooldownMs(ability);
+		if (entityCooldownMs > 0L)
+		{
+			return entityCooldownMs;
+		}
+		return GetManualCooldownRemainingMs(ability);
 	}
 
 	private void RefreshAbilityTimerDids(RotationAbility ability)
@@ -6735,16 +6750,63 @@ catch { }
 
 	// Radius used by the "Near" column (MinNearbyEnemies) when counting enemies.
 	// Deliberately independent of AutoTargetMaxRange, which only controls the
-	// "Auto target furthest/closest enemy" feature.
-	private const double NearbyEnemyCountRadius = 40.0;
+	// "Auto target furthest/closest enemy" feature. Counted around the current
+	// selected hostile target (not around the player) so the gate reflects how
+	// many enemies an AoE actually lands on rather than a wide room sweep.
+	private const double NearbyEnemyCountRadius = 15.0;
+
+	private const float LandblockSize = 192f;
+
+	// Positions are landblock-local; normalize to world space so distances are
+	// valid across cell/landblock borders. LandblockRaw == 0xFFFFFFFF means the
+	// object is too far away to be rendered (no reliable landblock).
+	private static Vector3? GetEntityWorldPosition(IEntity entity)
+	{
+		try
+		{
+			if (entity == null)
+			{
+				return null;
+			}
+			ILocation location = entity.Location;
+			Vector3? local = location?.Position ?? entity.Position;
+			if (!local.HasValue)
+			{
+				return null;
+			}
+			Vector3 position = local.Value;
+			if (location == null || location.LandblockRaw == uint.MaxValue)
+			{
+				return position;
+			}
+			return new Vector3((float)location.LandblockX * LandblockSize + position.X, (float)location.LandblockY * LandblockSize + position.Y, position.Z);
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	// Anchor for the "Near" count: the selected hostile target when there is
+	// one, otherwise the player.
+	private IEntity GetNearbyCountAnchor(IEntity self)
+	{
+		IEntity selected = _selectedObject;
+		if (selected != null && selected.InstanceId != (self?.InstanceId ?? 0UL) && IsCountedEnemy(selected) && GetEntityWorldPosition(selected).HasValue)
+		{
+			return selected;
+		}
+		return self;
+	}
 
 	internal int CountNearbyEnemies()
 	{
 		try
 		{
-			IEntity entity = _currentEntity;
-			Vector3? myPos = entity?.Location?.Position ?? entity?.Position;
-			if (entity == null || !myPos.HasValue)
+			IEntity current = _currentEntity;
+			IEntity anchor = GetNearbyCountAnchor(current);
+			Vector3? anchorPos = GetEntityWorldPosition(anchor);
+			if (anchor == null || !anchorPos.HasValue)
 			{
 				return 0;
 			}
@@ -6756,6 +6818,7 @@ catch { }
 			}
 			int num2 = 0;
 			HashSet<ulong> seen = new HashSet<ulong>();
+			ulong anchorId = anchor.InstanceId;
 			foreach (IEntity item in readOnlyCollection)
 			{
 				if (item == null)
@@ -6766,12 +6829,16 @@ catch { }
 				{
 					continue;
 				}
+				if (anchorId != 0UL && item.InstanceId == anchorId)
+				{
+					continue;
+				}
 				if (!IsCountedEnemy(item))
 				{
 					continue;
 				}
-				Vector3? vector = item.Location?.Position ?? item.Position;
-				if (vector.HasValue && Distance(myPos.Value, vector.Value) <= num)
+				Vector3? vector = GetEntityWorldPosition(item);
+				if (vector.HasValue && Distance(anchorPos.Value, vector.Value) <= num)
 				{
 					num2++;
 				}
@@ -6846,13 +6913,16 @@ catch { }
 	{
 		try
 		{
-			IEntity entity = _currentEntity;
-			Vector3? myPos = entity?.Location?.Position ?? entity?.Position;
+			IEntity current = _currentEntity;
+			IEntity anchor = GetNearbyCountAnchor(current);
+			Vector3? myPos = GetEntityWorldPosition(anchor);
 			double num = NearbyEnemyCountRadius;
 			IReadOnlyList<IEntity> readOnlyCollection = GetEntitiesSnapshot();
 			int total = readOnlyCollection?.Count ?? 0;
 			int withPos = 0;
 			int alive = 0;
+			ulong anchorId = anchor?.InstanceId ?? 0UL;
+			string anchorName = anchor?.Name ?? "none";
 			List<(double Dist, string Text)> nearest = new List<(double, string)>();
 			if (readOnlyCollection != null && myPos.HasValue)
 			{
@@ -6862,7 +6932,11 @@ catch { }
 					{
 						continue;
 					}
-					Vector3? vector = item.Location?.Position ?? item.Position;
+					if (anchorId != 0UL && item.InstanceId == anchorId)
+					{
+						continue;
+					}
+					Vector3? vector = GetEntityWorldPosition(item);
 					if (!vector.HasValue)
 					{
 						continue;
@@ -6881,7 +6955,7 @@ catch { }
 			}
 			nearest.Sort((a, b) => a.Dist.CompareTo(b.Dist));
 			string text = string.Join(", ", nearest.Take(6).Select(x => $"{x.Text}@{x.Dist:F0}u"));
-			return $"census radius={num:F0} entities={total} withPos={withPos} alive={alive} hostileInRange={CountNearbyEnemies()} near=[{text}]";
+			return $"census anchor={anchorName} radius={num:F0} entities={total} withPos={withPos} alive={alive} hostileInRange={CountNearbyEnemies()} near=[{text}]";
 		}
 		catch (Exception ex)
 		{
