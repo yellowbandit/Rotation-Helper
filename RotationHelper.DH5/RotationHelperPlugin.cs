@@ -6627,6 +6627,11 @@ catch { }
 		}
 	}
 
+	// Radius used by the "Near" column (MinNearbyEnemies) when counting enemies.
+	// Deliberately independent of AutoTargetMaxRange, which only controls the
+	// "Auto target furthest/closest enemy" feature.
+	private const double NearbyEnemyCountRadius = 40.0;
+
 	internal int CountNearbyEnemies()
 	{
 		try
@@ -6637,7 +6642,7 @@ catch { }
 			{
 				return 0;
 			}
-			double num = (((double)_config.AutoTargetMaxRange > 0.0) ? ((double)_config.AutoTargetMaxRange) : 40.0);
+			double num = NearbyEnemyCountRadius;
 			IReadOnlyList<IEntity> readOnlyCollection = GetEntitiesSnapshot();
 			if (readOnlyCollection == null || readOnlyCollection.Count == 0)
 			{
@@ -6737,7 +6742,7 @@ catch { }
 		{
 			IEntity entity = _currentEntity;
 			Vector3? myPos = entity?.Location?.Position ?? entity?.Position;
-			double num = (((double)_config.AutoTargetMaxRange > 0.0) ? ((double)_config.AutoTargetMaxRange) : 40.0);
+			double num = NearbyEnemyCountRadius;
 			IReadOnlyList<IEntity> readOnlyCollection = GetEntitiesSnapshot();
 			int total = readOnlyCollection?.Count ?? 0;
 			int withPos = 0;
