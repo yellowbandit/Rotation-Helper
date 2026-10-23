@@ -6816,7 +6816,7 @@ catch { }
 			{
 				return 0;
 			}
-			int num2 = 0;
+			int num2 = ((anchor != current && IsCountedEnemy(anchor)) ? 1 : 0);
 			HashSet<ulong> seen = new HashSet<ulong>();
 			ulong anchorId = anchor.InstanceId;
 			foreach (IEntity item in readOnlyCollection)
