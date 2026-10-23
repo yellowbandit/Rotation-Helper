@@ -2511,59 +2511,63 @@ public class ImGuiConfigWindow
 		}
 	}
 
-	private void LoadSelectedProfile()
-	{
-		if (string.IsNullOrEmpty(_loadProfileSelection))
+		private void LoadSelectedProfile()
 		{
-			return;
-		}
-		try
-		{
-			JsonSerializerOptions options = new JsonSerializerOptions
+			if (string.IsNullOrEmpty(_loadProfileSelection))
 			{
-				WriteIndented = true
-			};
-			string path = Path.Combine(_plugin.GetAccountDir(), _loadProfileSelection);
-			if (Directory.Exists(path))
-			{
-				string[] rotationFiles = Directory.GetFiles(path, "*-rotation.json");
-				if (rotationFiles.Length != 0)
-				{
-					string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(rotationFiles[0]);
-					string stem = fileNameWithoutExtension.Substring(0, fileNameWithoutExtension.Length - "-rotation".Length);
-					string text = Path.Combine(path, stem + "-rotation.json");
-					_plugin.Rotation = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text), options) ?? new List<RotationAbility>();
-					string text2 = Path.Combine(path, stem + "-bufforder.json");
-					if (File.Exists(text2))
-					{
-						_plugin.BuffOrder = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text2), options) ?? new List<RotationAbility>();
-					}
-					string text3 = Path.Combine(path, stem + "-emergency.json");
-					if (File.Exists(text3))
-					{
-						_plugin.Emergency = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text3), options) ?? new List<RotationAbility>();
-					}
-					string text4 = Path.Combine(path, stem + "-toggles.json");
-					if (File.Exists(text4))
-					{
-						_plugin.ToggleBuffs = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text4), options) ?? new List<RotationAbility>();
-					}
-					string text5 = Path.Combine(path, stem + "-settings.json");
-					if (File.Exists(text5))
-					{
-						RotationConfig rotationConfig = JsonSerializer.Deserialize<RotationConfig>(File.ReadAllText(text5), options);
-						if (rotationConfig != null)
-						{
-							_plugin._config = rotationConfig;
-						}
-					}
-					_plugin._config.CharacterName = _loadProfileSelection;
-					_plugin._profileCharId = ParseStemCharId(stem);
-					SaveAll();
-					_statusMessage = "Loaded profile '" + _loadProfileSelection + "'";
-					return;
-				}
+				return;
 			}
+			try
+			{
+				JsonSerializerOptions options = new JsonSerializerOptions
+				{
+					WriteIndented = true
+				};
+				string path = Path.Combine(_plugin.GetAccountDir(), _loadProfileSelection);
+				if (Directory.Exists(path))
+				{
+					string[] rotationFiles = Directory.GetFiles(path, "*-rotation.json");
+					if (rotationFiles.Length != 0)
+					{
+						string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(rotationFiles[0]);
+						string stem = fileNameWithoutExtension.Substring(0, fileNameWithoutExtension.Length - "-rotation".Length);
+						string text = Path.Combine(path, stem + "-rotation.json");
+						_plugin.Rotation = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text), options) ?? new List<RotationAbility>();
+						string text2 = Path.Combine(path, stem + "-bufforder.json");
+						if (File.Exists(text2))
+						{
+							_plugin.BuffOrder = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text2), options) ?? new List<RotationAbility>();
+						}
+						string text3 = Path.Combine(path, stem + "-emergency.json");
+						if (File.Exists(text3))
+						{
+							_plugin.Emergency = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text3), options) ?? new List<RotationAbility>();
+						}
+						string text4 = Path.Combine(path, stem + "-toggles.json");
+						if (File.Exists(text4))
+						{
+							_plugin.ToggleBuffs = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(text4), options) ?? new List<RotationAbility>();
+						}
+						string text5 = Path.Combine(path, stem + "-settings.json");
+						if (File.Exists(text5))
+						{
+							RotationConfig rotationConfig = JsonSerializer.Deserialize<RotationConfig>(File.ReadAllText(text5), options);
+							if (rotationConfig != null)
+							{
+								_plugin._config = rotationConfig;
+							}
+						}
+						else if (_plugin._config != null)
+						{
+							_plugin.SaveConfig();
+						}
+						_plugin._config.CharacterName = _loadProfileSelection;
+						_plugin._profileCharId = ParseStemCharId(stem);
+						SaveAll();
+						_statusMessage = "Loaded profile '" + _loadProfileSelection + "'";
+						return;
+					}
+				}
 			string legacyDir = Path.Combine(Path.Combine(_plugin._pluginFolder, "Character profiles"), _loadProfileSelection);
 			_plugin.Rotation = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(Path.Combine(legacyDir, "rotation.json")), options) ?? new List<RotationAbility>();
 			_plugin.BuffOrder = JsonSerializer.Deserialize<List<RotationAbility>>(File.ReadAllText(Path.Combine(legacyDir, "bufforder.json")), options) ?? new List<RotationAbility>();
@@ -2576,6 +2580,10 @@ public class ImGuiConfigWindow
 			}
 			_plugin._config.CharacterName = _loadProfileSelection;
 			_plugin._profileCharId = 0uL;
+			if (_plugin._config == null)
+				_plugin._config = new RotationConfig();
+			_plugin._config.CharacterName = _loadProfileSelection;
+			_plugin.SaveConfig();
 			SaveAll();
 			_statusMessage = "Loaded profile '" + _loadProfileSelection + "'";
 		}
@@ -7797,33 +7805,40 @@ catch { }
 		}
 	}
 
-	internal void LoadConfig()
-	{
-		try
+		internal void LoadConfig()
 		{
-			string configPath = GetConfigPath();
-			if (File.Exists(configPath))
+			try
 			{
-				RotationConfig rotationConfig = RotationConfig.Load(configPath);
-				if (rotationConfig != null)
+				string configPath = GetConfigPath();
+				if (File.Exists(configPath))
 				{
-					rotationConfig.CharacterName = _config.CharacterName;
-					_config = rotationConfig;
-					Log("Loaded per-character config for '" + _config.CharacterName + "'");
+					RotationConfig rotationConfig = RotationConfig.Load(configPath);
+					if (rotationConfig != null)
+					{
+						string charName = _config?.CharacterName;
+						ulong profileId = _profileCharId;
+						_config = rotationConfig;
+						if (!string.IsNullOrEmpty(charName))
+							_config.CharacterName = charName;
+						_profileCharId = profileId;
+						Log("Loaded per-character config for '" + _config.CharacterName + "'");
+						return;
+					}
 				}
+				string charName2 = _config?.CharacterName;
+				ulong profileId2 = _profileCharId;
+				if (_config == null)
+					_config = new RotationConfig();
+				if (!string.IsNullOrEmpty(charName2))
+					_config.CharacterName = charName2;
+				_profileCharId = profileId2;
+				SaveConfig();
+				Log("No profile found for '" + (charName2 ?? "none") + "', saving current settings to profile");
 			}
-			else
+			catch
 			{
-				string charName = _config.CharacterName;
-				_config = new RotationConfig();
-				_config.CharacterName = charName;
-				Log("No profile found for '" + (charName ?? "none") + "', using defaults");
 			}
 		}
-		catch
-		{
-		}
-	}
 
 	internal string GetCharacterName()
 	{
