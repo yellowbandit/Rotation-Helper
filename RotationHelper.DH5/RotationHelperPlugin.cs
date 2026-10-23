@@ -6523,7 +6523,9 @@ catch { }
 			{
 				return false;
 			}
-			if (entity.HitPoints_Current.GetValueOrDefault() <= 0)
+			// DH5: vitals are only kept current for tracked entities, so a null
+			// HitPoints_Current means "unknown", NOT "dead". Only reject confirmed deaths.
+			if (entity.HitPoints_Current.HasValue && entity.HitPoints_Current.Value <= 0)
 			{
 				return false;
 			}
@@ -6563,6 +6565,13 @@ catch { }
 				case WeenieType.Mount:
 				case WeenieType.CosmeticPet:
 					return false;
+				}
+				if ((weenieType.Value & 0xFFFFu) == 0x4Fu && (weenieType.Value & 0x00010000u) != 0)
+				{
+					// Monster-class creature (MajorWeenieType.Monster bit) with no
+					// attackable property available - still an enemy. This is the
+					// path that keeps nearby counting working when vitals are cold.
+					return true;
 				}
 			}
 			return entity.HitPoints_Max.GetValueOrDefault() > 0;
@@ -6615,7 +6624,7 @@ catch { }
 				return 0;
 			}
 			double num = (((double)_config.AutoTargetMaxRange > 0.0) ? ((double)_config.AutoTargetMaxRange) : 40.0);
-			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
+			IReadOnlyList<IEntity> readOnlyCollection = GetEntitiesSnapshot();
 			if (readOnlyCollection == null || readOnlyCollection.Count == 0)
 			{
 				return 0;
@@ -6641,6 +6650,30 @@ catch { }
 		}
 	}
 
+	// Returns the current entity list, refreshing it on demand when the frame
+	// cache is empty (e.g. ClientFrameStep did not run or failed).
+	private IReadOnlyList<IEntity> GetEntitiesSnapshot()
+	{
+		IReadOnlyList<IEntity> list = _entities;
+		if (list != null && list.Count > 0)
+		{
+			return list;
+		}
+		try
+		{
+			list = _gameDataProvider?.GetEntitiesAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+			if (list != null && list.Count > 0)
+			{
+				_entities = list;
+			}
+		}
+		catch
+		{
+			list = _entities;
+		}
+		return list ?? System.Array.Empty<IEntity>();
+	}
+
 	// Diagnostic: explains why a "Near" (MinNearbyEnemies) ability is being blocked.
 	internal string DescribeNearbyCensus()
 	{
@@ -6649,7 +6682,7 @@ catch { }
 			IEntity entity = _currentEntity;
 			Vector3? myPos = entity?.Location?.Position ?? entity?.Position;
 			double num = (((double)_config.AutoTargetMaxRange > 0.0) ? ((double)_config.AutoTargetMaxRange) : 40.0);
-			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
+			IReadOnlyList<IEntity> readOnlyCollection = GetEntitiesSnapshot();
 			int total = readOnlyCollection?.Count ?? 0;
 			int withPos = 0;
 			int alive = 0;
@@ -6668,13 +6701,15 @@ catch { }
 						continue;
 					}
 					withPos++;
-					if (item.HitPoints_Current.GetValueOrDefault() <= 0)
+					if (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0)
 					{
 						continue;
 					}
 					alive++;
 					uint? weenieType = item.WeeniePropertyCollection?.GetEnumProperty(287u)?.UInt32Value;
-					nearest.Add((Distance(myPos.Value, vector.Value), $"{item.Name}[wt=0x{weenieType.GetValueOrDefault():X}]"));
+					long? atk = ReadPropertyLong(item.GetProperty(268435581u));
+					string hostileMark = IsHostileEntity(item) ? "HOSTILE" : "no";
+					nearest.Add((Distance(myPos.Value, vector.Value), $"{item.Name}[wt=0x{weenieType.GetValueOrDefault():X},atk={(atk.HasValue ? atk.Value.ToString() : "?")},{hostileMark}]"));
 				}
 			}
 			nearest.Sort((a, b) => a.Dist.CompareTo(b.Dist));
