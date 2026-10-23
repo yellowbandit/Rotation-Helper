@@ -2499,6 +2499,12 @@ public class ImGuiConfigWindow
 				}
 			}
 			_loadProfiles.Sort();
+			string currentName = _plugin._config?.CharacterName;
+			if (_loadProfiles.Count > 0 && (string.IsNullOrEmpty(_loadProfileSelection) || !_loadProfiles.Contains(_loadProfileSelection)))
+			{
+				string match = _loadProfiles.Find((string p) => string.Equals(p, currentName, StringComparison.OrdinalIgnoreCase));
+				_loadProfileSelection = match ?? _loadProfileSelection;
+			}
 		}
 		catch
 		{
@@ -3204,6 +3210,8 @@ catch { }
 	internal DateTime _lastHotbarUsageTime = DateTime.MinValue;
 
 	internal DateTime _lastMapChangeTime = DateTime.MinValue;
+
+	private DateTime _lastCharacterCheckTime = DateTime.MinValue;
 
 	internal DateTime? _lastSuccessfulTick = null;
 
@@ -5529,6 +5537,7 @@ catch { }
 		try
 		{
 			DateTime utcNow = DateTime.UtcNow;
+			AutoLoadCharacterProfileIfChanged();
 			CheckAutoAttack();
 			if (ToggleBuffs.Count > 0)
 			{
@@ -7338,6 +7347,7 @@ catch { }
 			{
 				return;
 			}
+			text = ResolveProfileCharacterName(text);
 			ulong num = _gameDataProvider?.GetCurrentCharacterId().GetValueOrDefault() ?? 0;
 			if (string.IsNullOrEmpty(_config.CharacterName))
 			{
@@ -7382,6 +7392,70 @@ catch { }
 		}
 		catch
 		{
+		}
+	}
+
+	private string ResolveProfileCharacterName(string characterName)
+	{
+		if (string.IsNullOrEmpty(characterName))
+		{
+			return characterName;
+		}
+		try
+		{
+			string accountDir = GetAccountDir();
+			if (string.IsNullOrEmpty(accountDir) || !Directory.Exists(accountDir))
+			{
+				return characterName;
+			}
+			string safeName = string.Join("_", characterName.Split(Path.GetInvalidFileNameChars()));
+			if (Directory.Exists(Path.Combine(accountDir, safeName)))
+			{
+				return characterName;
+			}
+			foreach (string directory in Directory.GetDirectories(accountDir))
+			{
+				string folderName = Path.GetFileName(directory);
+				if (string.Equals(folderName, safeName, StringComparison.OrdinalIgnoreCase))
+				{
+					Log("Profile folder '" + folderName + "' matched character '" + characterName + "' case-insensitively");
+					return folderName;
+				}
+			}
+		}
+		catch
+		{
+		}
+		return characterName;
+	}
+
+	private void AutoLoadCharacterProfileIfChanged()
+	{
+		DateTime utcNow = DateTime.UtcNow;
+		if ((utcNow - _lastCharacterCheckTime).TotalSeconds < 5.0)
+		{
+			return;
+		}
+		_lastCharacterCheckTime = utcNow;
+		try
+		{
+			string text = _gameDataProvider?.GetCurrentCharacterNameAsync().GetAwaiter().GetResult();
+			if (string.IsNullOrEmpty(text))
+			{
+				return;
+			}
+			text = ResolveProfileCharacterName(text);
+			ulong num = _gameDataProvider?.GetCurrentCharacterId().GetValueOrDefault() ?? 0;
+			if (string.Equals(_config?.CharacterName, text, StringComparison.Ordinal) && _profileCharId == num)
+			{
+				return;
+			}
+			Log($"Auto-load: character is '{text}' (id {num}), profile was '{_config?.CharacterName ?? "none"}' (id {_profileCharId}) - switching");
+			SwapToCharacterConfig();
+		}
+		catch (Exception ex)
+		{
+			Log("Auto-load profile check failed: " + ex.Message);
 		}
 	}
 
