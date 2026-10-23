@@ -4918,7 +4918,8 @@ catch { }
 					Log($"FIRE [{ability.KeyLabel}] {ability.Name} via InvokeHotbar(Bar{ability.InvokeBar.Value + 1} Slot{ability.InvokeSlot.Value + 1}, target={(selectedId.HasValue ? selectedId.Value.ToString() : "none")})");
 					return true;
 				}
-				Log($"InvokeHotbar refused [{ability.KeyLabel}] {ability.Name} (Bar{ability.InvokeBar.Value + 1} Slot{ability.InvokeSlot.Value + 1}) - falling back");
+				Log($"InvokeHotbar refused [{ability.KeyLabel}] {ability.Name} (Bar{ability.InvokeBar.Value + 1} Slot{ability.InvokeSlot.Value + 1}) - on cooldown, skipping");
+				return false;
 			}
 			catch (Exception ex)
 			{
@@ -6186,7 +6187,7 @@ catch { }
 				for (int l = 0; l < Rotation.Count; l++)
 				{
 					RotationAbility rotationAbility5 = Rotation[l];
-					if (!rotationAbility5.Autocast || !rotationAbility5.ReferenceDid.HasValue || rotationAbility5.ReferenceDid == 0 || IsOnCooldown(rotationAbility5) || (utcNow - rotationAbility5.LastFired).TotalMilliseconds < 150.0)
+					if (!rotationAbility5.Autocast || !rotationAbility5.ReferenceDid.HasValue || rotationAbility5.ReferenceDid == 0 || (utcNow - rotationAbility5.LastFired).TotalMilliseconds < 150.0)
 					{
 						continue;
 					}
@@ -6262,10 +6263,18 @@ catch { }
 						list.Add(rotationAbility5);
 					}
 				}
-				RotationAbility rotationAbility6 = list.FirstOrDefault();
-				if (rotationAbility6 != null && FireAbility(rotationAbility6, skipCooldown: true))
+RotationAbility rotationAbility6 = null;
+				foreach (RotationAbility candidate in list)
 				{
-					rotationAbility6.LastFired = utcNow;
+					if (FireAbility(candidate, skipCooldown: true))
+					{
+						rotationAbility6 = candidate;
+						break;
+					}
+				}
+				if (rotationAbility6 != null)
+				{
+					rotationAbility6.LastFired = DateTime.UtcNow;
 					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name);
 				}
 			}
