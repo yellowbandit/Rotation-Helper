@@ -3171,6 +3171,7 @@ catch { }
 	private DateTime _lastNearbyLogTime = DateTime.MinValue;
 	private DateTime _lastNearbyOkLogTime = DateTime.MinValue;
 	private DateTime _lastEmergencyLogTime = DateTime.MinValue;
+	private DateTime _lastPartyHealScanLogTime = DateTime.MinValue;
 	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
 
 	private ulong? _pendingEmergencyTargetId;
@@ -5906,12 +5907,17 @@ catch { }
 						IReadOnlyList<IPartyMember> readOnlyList2 = _gameDataProvider?.GetPartyMembers();
 						if (readOnlyList2 != null && readOnlyList2.Count > 0)
 						{
-							Log($"PARTY HEAL: {readOnlyList2.Count} party members found");
+							bool verbose = (utcNow - _lastPartyHealScanLogTime).TotalSeconds >= 5.0;
+							if (verbose)
+							{
+								_lastPartyHealScanLogTime = utcNow;
+								Log($"PARTY HEAL: {readOnlyList2.Count} party members found");
+							}
 							int[] array2 = new int[Emergency.Count];
 							for (int k = 0; k < Emergency.Count; k++)
 							{
 								RotationAbility rotationAbility3 = Emergency[k];
-								if (rotationAbility3.PartyCountThreshold <= 0 || rotationAbility3.PartyHpThreshold <= 0)
+								if (rotationAbility3.PartyHpThreshold <= 0)
 								{
 									continue;
 								}
@@ -5929,13 +5935,16 @@ catch { }
 									}
 								}
 								array2[k] = num7;
-								Log($"PARTY COUNT [{k}] {rotationAbility3.Name}: {num7} below {rotationAbility3.PartyHpThreshold}% (need {rotationAbility3.PartyCountThreshold})");
+								if (verbose)
+								{
+									Log($"PARTY COUNT [{k}] {rotationAbility3.Name}: {num7} below {rotationAbility3.PartyHpThreshold}% (need {rotationAbility3.PartyCountThreshold})");
+								}
 							}
 							Vector3? myPos = GetWorldPosition(_currentEntity?.Location, _currentEntity?.Position);
-							Dictionary<string, ulong> partyEntityIds = new Dictionary<string, ulong>();
+							Dictionary<string, ulong> partyEntityIds = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
 							try
 							{
-								foreach (IEntity e in _entities ?? new List<IEntity>())
+								foreach (IEntity e in GetEntitiesSnapshot())
 								{
 									if (!string.IsNullOrEmpty(e.Name))
 										partyEntityIds[e.Name] = e.InstanceId;
@@ -5946,14 +5955,26 @@ catch { }
 							{
 								if (!item4.IsValid() || !item4.Connected() || item4.MaxHitPoints <= 0 || item4.HitPoints <= 0)
 								{
+									if (verbose)
+										Log($"PARTY MEMBER [{item4?.Name}] skipped: invalid/zero hp ({item4?.HitPoints}/{item4?.MaxHitPoints})");
 									continue;
+								}
+								bool hasEntityMatch = partyEntityIds.TryGetValue(item4.Name, out var instId);
+								if (verbose)
+								{
+									Log($"PARTY MEMBER [{item4.Name}] {item4.HitPoints}/{item4.MaxHitPoints} id={item4.Id} entity={(hasEntityMatch ? instId.ToString() : "none")}");
 								}
 								if (_config.HealRange > 0.0 && myPos.HasValue && GetWorldPosition(item4.Location, null) is Vector3 pPos)
 								{
 									double dx = myPos.Value.X - pPos.X;
 									double dy = myPos.Value.Y - pPos.Y;
-									if (Math.Sqrt(dx * dx + dy * dy) > _config.HealRange)
+									double dist = Math.Sqrt(dx * dx + dy * dy);
+									if (dist > _config.HealRange)
+									{
+										if (verbose)
+											Log($"PARTY MEMBER [{item4.Name}] out of range: {dist:F1}u > {_config.HealRange:F1}u");
 										continue;
+									}
 								}
 								double num9 = (double)item4.HitPoints / (double)item4.MaxHitPoints * 100.0;
 								double num10 = Math.Min(num9, 100.0);
@@ -5962,8 +5983,11 @@ catch { }
 									RotationAbility rotationAbility4 = Emergency[num11];
 									if (rotationAbility4.Autocast && rotationAbility4.ReferenceDid.HasValue && rotationAbility4.ReferenceDid != 0 && (!(rotationAbility4.HealScope != "Party") || !(rotationAbility4.HealScope != "Both")) && rotationAbility4.PartyHpThreshold > 0 && IsEmergencyHealReady(rotationAbility4, utcNow) && !(num10 > (double)rotationAbility4.PartyHpThreshold) && (rotationAbility4.PartyCountThreshold <= 0 || array2[num11] >= rotationAbility4.PartyCountThreshold))
 									{
-										if (!partyEntityIds.TryGetValue(item4.Name, out var instId))
-											continue;
+										if (!hasEntityMatch)
+										{
+											instId = item4.Id;
+											Log($"EMERGENCY PARTY [{item4.Name}] no nearby entity match - using party id {instId}");
+										}
 										_pendingEmergencyTargetId = instId;
 										_pendingEmergencyAbility = rotationAbility4;
 										_pendingTargetRevertId = null;
@@ -5973,8 +5997,9 @@ catch { }
 								}
 							}
 						}
-						else
+						else if ((utcNow - _lastPartyHealScanLogTime).TotalSeconds >= 5.0)
 						{
+							_lastPartyHealScanLogTime = utcNow;
 							Log("PARTY HEAL: no party members found");
 						}
 					}
