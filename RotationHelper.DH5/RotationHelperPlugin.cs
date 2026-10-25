@@ -3142,13 +3142,20 @@ public class RotationHelperPlugin : IPlugin, IDisposable
 
 	public void ClientFrameStep()
 	{
-		// DH5-PORT: cached entity refresh (TODO throttle)
+		// DH5-PORT: cached entity refresh. The full entity list hydration is
+		// expensive, so it is refreshed on a fixed interval instead of every
+		// client frame. Character/selection are cheap and stay per-frame.
 		if (_gameDataProvider == null) return;
 		try
 		{
 			_currentEntity = _gameDataProvider.GetCurrentCharacterAsync().ConfigureAwait(false).GetAwaiter().GetResult();
 			_selectedObject = _gameDataProvider.GetSelectedObjectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-			_entities = _gameDataProvider.GetEntitiesAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+			long nowTicks = Environment.TickCount64;
+			if (nowTicks - _lastEntityRefreshTicks >= EntityRefreshIntervalMs)
+			{
+				_lastEntityRefreshTicks = nowTicks;
+				_entities = _gameDataProvider.GetEntitiesAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+			}
 		}
 catch { }
 		BuffManager?.RefreshCache();
@@ -3267,6 +3274,8 @@ catch { }
 
 	private bool _autoAttackWasFiredThisZone;
 
+	private const int EntityRefreshIntervalMs = 200;
+	private long _lastEntityRefreshTicks;
 	private DateTime _lastAutoTargetCheck = DateTime.MinValue;
 	private DateTime _lastNearbyLogTime = DateTime.MinValue;
 	private DateTime _lastNearbyOkLogTime = DateTime.MinValue;
