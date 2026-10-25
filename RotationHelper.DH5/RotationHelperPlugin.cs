@@ -3246,14 +3246,17 @@ catch { }
 			{
 				return;
 			}
-			if (!_gameDataProvider.IsWorldDrawAvailable)
-			{
-				return;
-			}
+			// NOTE: deliberately do NOT gate on IsWorldDrawAvailable here.
+			// That flag only latches after DH has seen a world-draw submission,
+			// so returning early on false meant the ring could never appear
+			// until some *other* source (a cast, another plugin) submitted
+			// geometry first. Per the SDK docs, submitting anyway is safe: the
+			// geometry is simply drawn without correct occlusion until the
+			// depth buffer is validated, and submitting is what flips the flag.
 			IEntity current = _currentEntity;
 			IEntity anchor = GetNearbyCountAnchor(current);
 			Vector3? anchorPos = GetEntityWorldPosition(anchor);
-			if (anchor == null || !anchorPos.HasValue)
+			if (anchorPos == null || !anchorPos.HasValue)
 			{
 				return;
 			}
