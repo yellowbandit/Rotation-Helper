@@ -1684,6 +1684,12 @@ public class ImGuiConfigWindow
 			}
 			double? targetDistance = _plugin.GetTargetDistance();
 			ImGuiNET.ImGui.Text($"Target dist: {(targetDistance.HasValue ? $"{targetDistance.Value:F1}" : "--")}");
+			bool nearDebug = config.ShowNearRadiusDebug;
+			if (ImGuiNET.ImGui.Checkbox("Show Near radius debug", ref nearDebug))
+			{
+				config.ShowNearRadiusDebug = nearDebug;
+				_plugin.SaveConfig();
+			}
 			ImGuiNET.ImGui.Separator();
 			ImGuiNET.ImGui.Text("Rotation Abilities");
 			RenderRotationTable();
@@ -3049,6 +3055,10 @@ public class RotationConfig
 
 	public bool DamageMeterEnabled { get; set; } = false;
 
+	// Diagnostic: draws the Near-count radius ring and counted-enemy markers
+	// in the 3D world. Off by default; purely visual, changes no behaviour.
+	public bool ShowNearRadiusDebug { get; set; } = false;
+
 public List<uint> EnabledZoneDids { get; set; } = new List<uint>();
 
 	public string CharacterName { get; set; } = null;
@@ -3185,6 +3195,10 @@ catch { }
 			}
 		}
 		catch (Exception ex) { Log("Config render failed: " + ex.Message); }
+
+		// Diagnostic world overlay: draws the Near-count radius ring and marks
+		// the counted enemies. Off by default (config.ShowNearRadiusDebug).
+		RenderNearRadiusDebug();
 	}
 
 	/// <summary>
@@ -3207,6 +3221,121 @@ catch { }
 		}
 		catch (Exception ex) { Log("ResetUi failed: " + ex.Message); }
 		return true;
+	}
+
+	// Diagnostic overlay: a thin ring on the ground at the Near-count radius,
+	// centred on the same anchor CountNearbyEnemies uses, plus a small marker
+	// over every enemy that the gate actually counts. Purely visual.
+	private void RenderNearRadiusDebug()
+	{
+		try
+		{
+			RotationConfig config = _config;
+			if (config == null || !config.ShowNearRadiusDebug || _gameDataProvider == null)
+			{
+				return;
+			}
+			if (!_gameDataProvider.IsWorldDrawAvailable)
+			{
+				return;
+			}
+			IEntity current = _currentEntity;
+			IEntity anchor = GetNearbyCountAnchor(current);
+			Vector3? anchorPos = GetEntityWorldPosition(anchor);
+			if (anchor == null || !anchorPos.HasValue)
+			{
+				return;
+			}
+			float radius = (float)NearbyEnemyCountRadius;
+			Vector3 center = anchorPos.Value;
+			List<WorldDrawVertex> verts = new List<WorldDrawVertex>(256);
+			List<int> indices = new List<int>(384);
+
+			// Ring: flat N-gon band of thin quads lying on the ground.
+			const int segments = 48;
+			float band = 0.12f;
+			uint ringColor = 0xFFE0C060u; // packed AABBGGRR: soft blue-ish
+			for (int i = 0; i < segments; i++)
+			{
+				float a0 = (float)(Math.PI * 2.0 * i / segments);
+				float a1 = (float)(Math.PI * 2.0 * (i + 1) / segments);
+				float c0 = (float)Math.Cos(a0);
+				float s0 = (float)Math.Sin(a0);
+				float c1 = (float)Math.Cos(a1);
+				float s1 = (float)Math.Sin(a1);
+				int baseIdx = verts.Count;
+				verts.Add(new WorldDrawVertex(new Vector3(center.X + c0 * (radius - band), center.Y + s0 * (radius - band), center.Z + 0.05f), ringColor));
+				verts.Add(new WorldDrawVertex(new Vector3(center.X + c0 * (radius + band), center.Y + s0 * (radius + band), center.Z + 0.05f), ringColor));
+				verts.Add(new WorldDrawVertex(new Vector3(center.X + c1 * (radius + band), center.Y + s1 * (radius + band), center.Z + 0.05f), ringColor));
+				verts.Add(new WorldDrawVertex(new Vector3(center.X + c1 * (radius - band), center.Y + s1 * (radius - band), center.Z + 0.05f), ringColor));
+				indices.Add(baseIdx);
+				indices.Add(baseIdx + 1);
+				indices.Add(baseIdx + 2);
+				indices.Add(baseIdx);
+				indices.Add(baseIdx + 2);
+				indices.Add(baseIdx + 3);
+			}
+
+			// Markers over every enemy the gate counts, mirroring CountNearbyEnemies.
+			uint anchorColor = 0xFF40C0FFu; // warm highlight for the anchor itself
+			uint countedColor = 0xFF40FF40u; // green for the rest
+			AddNearRadiusMarker(verts, indices, center, 1.6f, anchorColor);
+			IReadOnlyList<IEntity> snapshot = GetEntitiesSnapshot();
+			if (snapshot != null)
+			{
+				HashSet<ulong> seen = new HashSet<ulong>();
+				ulong anchorId = anchor.InstanceId;
+				foreach (IEntity item in snapshot)
+				{
+					if (item == null)
+					{
+						continue;
+					}
+					if (item.InstanceId != 0UL && !seen.Add(item.InstanceId))
+					{
+						continue;
+					}
+					if (anchorId != 0UL && item.InstanceId == anchorId)
+					{
+						continue;
+					}
+					if (!IsCountedEnemy(item))
+					{
+						continue;
+					}
+					Vector3? pos = GetEntityWorldPosition(item);
+					if (!pos.HasValue || Distance(center, pos.Value) > NearbyEnemyCountRadius)
+					{
+						continue;
+					}
+					AddNearRadiusMarker(verts, indices, pos.Value, 1.0f, countedColor);
+				}
+			}
+
+			if (verts.Count > 0 && indices.Count > 0)
+			{
+				_gameDataProvider.SubmitColoredWorldTriangles(verts.ToArray(), indices.ToArray(), WorldDrawDepthMode.Occluded);
+			}
+		}
+		catch (Exception ex) { Log("RenderNearRadiusDebug failed: " + ex.Message); }
+	}
+
+	// Appends a small camera-facing-ish diamond marker (two crossed quads) at
+	// the given world position, raised slightly above the ground.
+	private static void AddNearRadiusMarker(List<WorldDrawVertex> verts, List<int> indices, Vector3 pos, float size, uint color)
+	{
+		float z = pos.Z + 1.0f;
+		int b = verts.Count;
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X - size, pos.Y, z), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y - size, z), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X + size, pos.Y, z), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y + size, z), color));
+		indices.Add(b);
+		indices.Add(b + 1);
+		indices.Add(b + 2);
+		indices.Add(b);
+		indices.Add(b + 2);
+		indices.Add(b + 3);
 	}
 
 	public void Dispose()
@@ -7095,7 +7224,9 @@ RotationAbility rotationAbility6 = null;
 	// many enemies an AoE actually lands on rather than a wide room sweep.
 	private const double NearbyEnemyCountRadius = 15.0;
 
-	private const float LandblockSize = 192f;
+	// Verified empirically against CameraView.Target (which DH guarantees is the
+	// player in absolute world coords): 160 * LandblockX + localX matches exactly.
+	private const float LandblockSize = 160f;
 
 	private static Vector3? GetWorldPosition(ILocation location, Vector3? fallback)
 	{
