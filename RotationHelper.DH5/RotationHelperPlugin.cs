@@ -3363,6 +3363,10 @@ catch { }
 
 	private static uint GameTimeDid = 268443087u;
 
+	// Flip to true only when debugging cooldown timing; leaving it on floods
+	// cdiag.log (~200 lines/sec) because the check runs every autocast tick.
+	private static readonly bool CooldownDiagEnabled = false;
+
 	private static readonly Dictionary<string, long> BuffDurationTable = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
 	{
 		{ "Personal Augmentation: Insightful Damage", 1140000L },
@@ -4609,6 +4613,12 @@ catch { }
 			{
 				return 0L;
 			}
+			// No timer DIDs means there is nothing to wait for - skip the
+			// property lookup loop entirely (runs every 20 ms autocast tick).
+			if (ability.CooldownTimerDid1 == 0 && ability.CooldownTimerDid2 == 0 && ability.CooldownTimerDid3 == 0)
+			{
+				return 0L;
+			}
 			if (!double.IsNaN(num) && Math.Abs(num3 - num) < 0.01)
 			{
 				if ((DateTime.UtcNow - _lastCooldownStaleLogTime).TotalSeconds >= 30.0)
@@ -4644,7 +4654,7 @@ catch { }
 				{
 					double num6 = num5 - num3;
 					long result = (long)(num6 * 1000.0);
-					try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} result={result}ms\r\n"); } catch {}
+					if (CooldownDiagEnabled) { try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} result={result}ms\r\n"); } catch {} }
 					lock (_cacheLock)
 					{
 						_cooldownCache[valueOrDefault] = (num6, DateTime.UtcNow, num3);
@@ -4653,7 +4663,7 @@ catch { }
 				}
 				else
 				{
-					try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} (timer<=gameTime, skip)\r\n"); } catch {}
+					if (CooldownDiagEnabled) { try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} (timer<=gameTime, skip)\r\n"); } catch {} }
 				}
 			}
 		}
