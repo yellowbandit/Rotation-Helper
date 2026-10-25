@@ -3067,8 +3067,8 @@ public class RotationConfig
 	public bool ShowNearRadiusDebug { get; set; } = false;
 
 	// Radius (game units) used by the "Near" (MinNearbyEnemies) gate when
-	// counting enemies. 15 is far wider than any AoE, so this is tunable.
-	public float NearRadiusUnits { get; set; } = 8f;
+	// counting enemies. 6u is about the reach of an AoE; tunable.
+	public float NearRadiusUnits { get; set; } = 6f;
 
 public List<uint> EnabledZoneDids { get; set; } = new List<uint>();
 
@@ -7249,14 +7249,14 @@ RotationAbility rotationAbility6 = null;
 	// "Auto target furthest/closest enemy" feature. Counted around the current
 	// selected hostile target (not around the player) so the gate reflects how
 	// many enemies an AoE actually lands on rather than a wide room sweep.
-	// Tunable via config.NearRadiusUnits (default 8u - 15u was wider than any AoE).
+	// Tunable via config.NearRadiusUnits (default 6u - AoE reach).
 	private double NearbyEnemyCountRadius
 	{
 		get
 		{
 			RotationConfig config = _config;
 			float configured = (config != null) ? config.NearRadiusUnits : 0f;
-			return (configured > 0f) ? configured : 8.0;
+			return (configured > 0f) ? configured : 6.0;
 		}
 	}
 
