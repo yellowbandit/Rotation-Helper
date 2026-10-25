@@ -6786,7 +6786,7 @@ RotationAbility rotationAbility6 = null;
 			{
 				foreach (IEntity item in readOnlyCollection)
 				{
-					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
+					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsCountedEnemy(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
 					{
 						continue;
 					}
@@ -6805,7 +6805,7 @@ RotationAbility rotationAbility6 = null;
 			if (entity2 == null)
 			{
 				IEntity entity3 = _selectedObject;
-				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsHostileEntity(entity3) && (!entity3.HitPoints_Current.HasValue || entity3.HitPoints_Current.Value > 0))
+				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsCountedEnemy(entity3) && (!entity3.HitPoints_Current.HasValue || entity3.HitPoints_Current.Value > 0))
 				{
 					Vector3? vector2 = entity3.Location?.Position;
 					if (vector2.HasValue)
@@ -6848,7 +6848,7 @@ RotationAbility rotationAbility6 = null;
 			{
 				foreach (IEntity item in readOnlyCollection)
 				{
-					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsHostileEntity(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
+					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsCountedEnemy(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
 					{
 						continue;
 					}
@@ -6867,7 +6867,7 @@ RotationAbility rotationAbility6 = null;
 			if (entity2 == null)
 			{
 				IEntity entity3 = _selectedObject;
-				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsHostileEntity(entity3) && (!entity3.HitPoints_Current.HasValue || entity3.HitPoints_Current.Value > 0))
+				if (entity3 != null && entity3.InstanceId != entity.InstanceId && entity3.InstanceId != 0 && IsCountedEnemy(entity3) && (!entity3.HitPoints_Current.HasValue || entity3.HitPoints_Current.Value > 0))
 				{
 					Vector3? vector2 = entity3.Location?.Position;
 					if (vector2.HasValue)
