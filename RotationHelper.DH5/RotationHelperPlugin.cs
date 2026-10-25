@@ -1690,6 +1690,13 @@ public class ImGuiConfigWindow
 				config.ShowNearRadiusDebug = nearDebug;
 				_plugin.SaveConfig();
 			}
+			float nearRadius = config.NearRadiusUnits;
+			ImGuiNET.ImGui.SetNextItemWidth(120f);
+			if (ImGuiNET.ImGui.InputFloat("Near radius (units)", ref nearRadius))
+			{
+				config.NearRadiusUnits = nearRadius;
+				_plugin.SaveConfig();
+			}
 			ImGuiNET.ImGui.Separator();
 			ImGuiNET.ImGui.Text("Rotation Abilities");
 			RenderRotationTable();
@@ -3059,6 +3066,10 @@ public class RotationConfig
 	// in the 3D world. Off by default; purely visual, changes no behaviour.
 	public bool ShowNearRadiusDebug { get; set; } = false;
 
+	// Radius (game units) used by the "Near" (MinNearbyEnemies) gate when
+	// counting enemies. 15 is far wider than any AoE, so this is tunable.
+	public float NearRadiusUnits { get; set; } = 8f;
+
 public List<uint> EnabledZoneDids { get; set; } = new List<uint>();
 
 	public string CharacterName { get; set; } = null;
@@ -3320,16 +3331,31 @@ catch { }
 		catch (Exception ex) { Log("RenderNearRadiusDebug failed: " + ex.Message); }
 	}
 
-	// Appends a small camera-facing-ish diamond marker (two crossed quads) at
-	// the given world position, raised slightly above the ground.
+	// Appends an upright marker at the given world position: two vertical quads
+	// crossed at 90 degrees, so it is readable from any camera angle instead of
+	// collapsing to a line when viewed edge-on.
 	private static void AddNearRadiusMarker(List<WorldDrawVertex> verts, List<int> indices, Vector3 pos, float size, uint color)
 	{
-		float z = pos.Z + 1.0f;
+		float z0 = pos.Z;
+		float z1 = pos.Z + size * 2f;
+		// Quad 1: along X.
 		int b = verts.Count;
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X - size, pos.Y, z), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y - size, z), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X + size, pos.Y, z), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y + size, z), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X - size, pos.Y, z0), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X + size, pos.Y, z0), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X + size, pos.Y, z1), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X - size, pos.Y, z1), color));
+		indices.Add(b);
+		indices.Add(b + 1);
+		indices.Add(b + 2);
+		indices.Add(b);
+		indices.Add(b + 2);
+		indices.Add(b + 3);
+		// Quad 2: along Y.
+		b = verts.Count;
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y - size, z0), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y + size, z0), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y + size, z1), color));
+		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y - size, z1), color));
 		indices.Add(b);
 		indices.Add(b + 1);
 		indices.Add(b + 2);
@@ -7222,7 +7248,16 @@ RotationAbility rotationAbility6 = null;
 	// "Auto target furthest/closest enemy" feature. Counted around the current
 	// selected hostile target (not around the player) so the gate reflects how
 	// many enemies an AoE actually lands on rather than a wide room sweep.
-	private const double NearbyEnemyCountRadius = 15.0;
+	// Tunable via config.NearRadiusUnits (default 8u - 15u was wider than any AoE).
+	private double NearbyEnemyCountRadius
+	{
+		get
+		{
+			RotationConfig config = _config;
+			float configured = (config != null) ? config.NearRadiusUnits : 0f;
+			return (configured > 0f) ? configured : 8.0;
+		}
+	}
 
 	// Verified empirically against CameraView.Target (which DH guarantees is the
 	// player in absolute world coords): 160 * LandblockX + localX matches exactly.
