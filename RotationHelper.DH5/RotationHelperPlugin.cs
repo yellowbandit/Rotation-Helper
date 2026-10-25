@@ -3252,6 +3252,7 @@ catch { }
 	private DateTime _lastCooldownStaleLogTime = DateTime.MinValue;
 	private DateTime _lastPartyHealScanLogTime = DateTime.MinValue;
 	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
+	private DateTime _lastAutoTargetDiagLogTime = DateTime.MinValue;
 
 	private ulong? _pendingEmergencyTargetId;
 
@@ -6775,6 +6776,11 @@ RotationAbility rotationAbility6 = null;
 			IEntity entity = _currentEntity;
 			if (entity == null || !(entity.Location?.Position).HasValue)
 			{
+				if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
+				{
+					_lastAutoTargetDiagLogTime = DateTime.UtcNow;
+					Log($"AUTOTARGET [furthest] BAIL: _currentEntity={(entity == null ? "null" : "'" + entity.Name + "'")} hasPos={(entity != null && (entity.Location?.Position).HasValue)}");
+				}
 				return;
 			}
 			Vector3 value = entity.Location.Position.Value;
@@ -6824,6 +6830,11 @@ RotationAbility rotationAbility6 = null;
 				if (curSelId != entity2.InstanceId)
 					_gameDataProvider?.SelectObject(entity2.InstanceId);
 			}
+			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
+			{
+				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
+				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")}");
+			}
 		}
 		catch
 		{
@@ -6837,6 +6848,11 @@ RotationAbility rotationAbility6 = null;
 			IEntity entity = _currentEntity;
 			if (entity == null || !(entity.Location?.Position).HasValue)
 			{
+				if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
+				{
+					_lastAutoTargetDiagLogTime = DateTime.UtcNow;
+					Log($"AUTOTARGET [closest] BAIL: _currentEntity={(entity == null ? "null" : "'" + entity.Name + "'")} hasPos={(entity != null && (entity.Location?.Position).HasValue)}");
+				}
 				return;
 			}
 			Vector3 value = entity.Location.Position.Value;
@@ -6885,6 +6901,11 @@ RotationAbility rotationAbility6 = null;
 				ulong? curSelId = _gameDataProvider?.GetSelectedObjectId();
 				if (curSelId != entity2.InstanceId)
 					_gameDataProvider?.SelectObject(entity2.InstanceId);
+			}
+			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
+			{
+				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
+				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")}");
 			}
 		}
 		catch
@@ -6975,10 +6996,6 @@ RotationAbility rotationAbility6 = null;
 				return attackable.Value > 0;
 			}
 			uint? weenieType = entity.WeeniePropertyCollection?.GetEnumProperty(287u)?.UInt32Value;
-			if (weenieType == 1245313)
-			{
-				return true;
-			}
 			if (weenieType.HasValue)
 			{
 				switch ((WeenieType)weenieType.Value)
@@ -6993,15 +7010,15 @@ RotationAbility rotationAbility6 = null;
 				case WeenieType.CosmeticPet:
 					return false;
 				}
-				if ((weenieType.Value & 0xFFFFu) == 0x4Fu && (weenieType.Value & 0x00010000u) != 0)
+				// Canonical hostility test from the SDK enum: only MajorWeenieType.Monster
+				// (0x0001004F) is a monster. NPC (0x0000004F), RealNPC (0x0002004F),
+				// Player (0x0000001F) etc. must NOT be treated as enemies.
+				if ((weenieType.Value & (uint)MajorWeenieType.MajorTypeMask) == (uint)MajorWeenieType.Monster)
 				{
-					// Monster-class creature (MajorWeenieType.Monster bit) with no
-					// attackable property available - still an enemy. This is the
-					// path that keeps nearby counting working when vitals are cold.
 					return true;
 				}
 			}
-			return entity.HitPoints_Max.GetValueOrDefault() > 0;
+			return false;
 		}
 		catch
 		{
@@ -7242,10 +7259,6 @@ RotationAbility rotationAbility6 = null;
 		if (!weenieType.HasValue)
 		{
 			return true;
-		}
-		if (weenieType.Value == 1245313u)
-		{
-			return false;
 		}
 		switch ((WeenieType)weenieType.Value)
 		{
