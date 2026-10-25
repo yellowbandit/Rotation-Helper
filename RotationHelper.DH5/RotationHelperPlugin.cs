@@ -3263,9 +3263,9 @@ catch { }
 			List<int> indices = new List<int>(384);
 
 			// Ring: flat N-gon band of thin quads lying on the ground.
-			const int segments = 48;
-			float band = 0.12f;
-			uint ringColor = 0xFFE0C060u; // packed AABBGGRR: soft blue-ish
+			const int segments = 64;
+			float band = 0.05f;
+			uint ringColor = 0x60FFD080u; // packed AABBGGRR: soft cyan, ~37% alpha
 			for (int i = 0; i < segments; i++)
 			{
 				float a0 = (float)(Math.PI * 2.0 * i / segments);
@@ -3288,9 +3288,10 @@ catch { }
 			}
 
 			// Markers over every enemy the gate counts, mirroring CountNearbyEnemies.
-			uint anchorColor = 0xFF40C0FFu; // warm highlight for the anchor itself
-			uint countedColor = 0xFF40FF40u; // green for the rest
-			AddNearRadiusMarker(verts, indices, center, 1.6f, anchorColor);
+			// Flat green discs under each counted enemy's feet; the anchor gets its
+			// own disc in the same style.
+			uint countedColor = 0x7000FF40u; // packed AABBGGRR: green, ~44% alpha
+			AddNearRadiusMarker(verts, indices, center, 1.4f, countedColor);
 			IReadOnlyList<IEntity> snapshot = GetEntitiesSnapshot();
 			if (snapshot != null)
 			{
@@ -3319,7 +3320,7 @@ catch { }
 					{
 						continue;
 					}
-					AddNearRadiusMarker(verts, indices, pos.Value, 1.0f, countedColor);
+					AddNearRadiusMarker(verts, indices, pos.Value, 0.9f, countedColor);
 				}
 			}
 
@@ -3331,37 +3332,34 @@ catch { }
 		catch (Exception ex) { Log("RenderNearRadiusDebug failed: " + ex.Message); }
 	}
 
-	// Appends an upright marker at the given world position: two vertical quads
-	// crossed at 90 degrees, so it is readable from any camera angle instead of
-	// collapsing to a line when viewed edge-on.
+	// Appends a flat, ground-hugging disc (annulus band) centred on the given
+	// world position. Lies in the XY plane so it reads as a clean circle on the
+	// floor rather than a raised/blocky marker.
 	private static void AddNearRadiusMarker(List<WorldDrawVertex> verts, List<int> indices, Vector3 pos, float size, uint color)
 	{
-		float z0 = pos.Z;
-		float z1 = pos.Z + size * 2f;
-		// Quad 1: along X.
-		int b = verts.Count;
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X - size, pos.Y, z0), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X + size, pos.Y, z0), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X + size, pos.Y, z1), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X - size, pos.Y, z1), color));
-		indices.Add(b);
-		indices.Add(b + 1);
-		indices.Add(b + 2);
-		indices.Add(b);
-		indices.Add(b + 2);
-		indices.Add(b + 3);
-		// Quad 2: along Y.
-		b = verts.Count;
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y - size, z0), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y + size, z0), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y + size, z1), color));
-		verts.Add(new WorldDrawVertex(new Vector3(pos.X, pos.Y - size, z1), color));
-		indices.Add(b);
-		indices.Add(b + 1);
-		indices.Add(b + 2);
-		indices.Add(b);
-		indices.Add(b + 2);
-		indices.Add(b + 3);
+		const int seg = 20;
+		float z = pos.Z + 0.05f;
+		float inner = size * 0.72f;
+		for (int i = 0; i < seg; i++)
+		{
+			float a0 = (float)(Math.PI * 2.0 * i / seg);
+			float a1 = (float)(Math.PI * 2.0 * (i + 1) / seg);
+			float c0 = (float)Math.Cos(a0);
+			float s0 = (float)Math.Sin(a0);
+			float c1 = (float)Math.Cos(a1);
+			float s1 = (float)Math.Sin(a1);
+			int b = verts.Count;
+			verts.Add(new WorldDrawVertex(new Vector3(pos.X + c0 * inner, pos.Y + s0 * inner, z), color));
+			verts.Add(new WorldDrawVertex(new Vector3(pos.X + c0 * size, pos.Y + s0 * size, z), color));
+			verts.Add(new WorldDrawVertex(new Vector3(pos.X + c1 * size, pos.Y + s1 * size, z), color));
+			verts.Add(new WorldDrawVertex(new Vector3(pos.X + c1 * inner, pos.Y + s1 * inner, z), color));
+			indices.Add(b);
+			indices.Add(b + 1);
+			indices.Add(b + 2);
+			indices.Add(b);
+			indices.Add(b + 2);
+			indices.Add(b + 3);
+		}
 	}
 
 	public void Dispose()
