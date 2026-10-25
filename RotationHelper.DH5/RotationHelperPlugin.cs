@@ -3180,6 +3180,28 @@ catch { }
 		catch (Exception ex) { Log("Config render failed: " + ex.Message); }
 	}
 
+	/// <summary>
+	/// DH contract: called on the render thread when the host asks the plugin to
+	/// restore its UI to a default layout. We reset the HUD to its default docked
+	/// position and re-show the main window. Return true = handled.
+	/// </summary>
+	public bool ResetUi()
+	{
+		try
+		{
+			RotationConfig config = _config;
+			if (config != null)
+			{
+				config.HudX = -1;
+				config.HudY = -1;
+			}
+			WindowVisible = true;
+			_showConfigWindow = true;
+		}
+		catch (Exception ex) { Log("ResetUi failed: " + ex.Message); }
+		return true;
+	}
+
 	public void Dispose()
 	{
 		Terminate();
