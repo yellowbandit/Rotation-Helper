@@ -3071,8 +3071,9 @@ public List<uint> EnabledZoneDids { get; set; } = new List<uint>();
 				return JsonSerializer.Deserialize<RotationConfig>(json) ?? new RotationConfig();
 			}
 		}
-		catch
+		catch (Exception ex)
 		{
+			RotationConfigLog?.Invoke("RotationConfig.Load failed for '" + path + "': " + ex);
 		}
 		return new RotationConfig();
 	}
@@ -3087,10 +3088,13 @@ public List<uint> EnabledZoneDids { get; set; } = new List<uint>();
 			});
 			File.WriteAllText(path, contents);
 		}
-		catch
+		catch (Exception ex)
 		{
+			RotationConfigLog?.Invoke("RotationConfig.Save failed for '" + path + "': " + ex);
 		}
 	}
+
+	internal static Action<string> RotationConfigLog;
 }
 [VoK.Sdk.PluginId("b1c2d3e4-f5a6-7890-1234-56789abcdef0")]
 [VoK.Sdk.PluginName("RotationHelper")]
@@ -3995,6 +3999,7 @@ catch { }
 		{
 			Directory.CreateDirectory(AppDataDir);
 		}
+		RotationConfig.RotationConfigLog = Log;
 		_config = RotationConfig.Load(Path.Combine(folder, "RotationHelper.json"));
 		SwapToCharacterConfig();
 		LoadRotation();
@@ -7691,10 +7696,17 @@ RotationAbility rotationAbility6 = null;
 			ulong num = _gameDataProvider?.GetCurrentCharacterId().GetValueOrDefault() ?? 0;
 			if (string.IsNullOrEmpty(_config.CharacterName))
 			{
+				// Set identity FIRST, then load the per-character file.
+				// Never SaveConfig() before loading - that overwrites a stored profile with defaults.
 				_config.CharacterName = text;
 				_profileCharId = num;
-				SaveConfig();
+				string expectedPath = GetConfigPath();
+				bool hadExistingProfile = !string.IsNullOrEmpty(expectedPath) && File.Exists(expectedPath);
 				LoadConfig();
+				if (!hadExistingProfile)
+				{
+					SaveConfig();
+				}
 				MigrateFromLegacyIfNeeded();
 				LoadRotation();
 				LoadBuffOrder();
@@ -8011,8 +8023,9 @@ RotationAbility rotationAbility6 = null;
 			}
 			_config.Save(configPath);
 		}
-		catch
+		catch (Exception ex)
 		{
+			Log("SaveConfig error: " + ex);
 		}
 	}
 
@@ -8028,7 +8041,22 @@ RotationAbility rotationAbility6 = null;
 					{
 						string charName = _config?.CharacterName;
 						ulong profileId = _profileCharId;
-						_config = rotationConfig;
+						if (_config != null)
+						{
+							// Copy loaded values into the existing instance so UI controls
+							// that hold a reference to _config keep writing to the live object.
+							foreach (System.Reflection.PropertyInfo prop in typeof(RotationConfig).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+							{
+								if (prop.CanRead && prop.CanWrite)
+								{
+									try { prop.SetValue(_config, prop.GetValue(rotationConfig)); } catch { }
+								}
+							}
+						}
+						else
+						{
+							_config = rotationConfig;
+						}
 						if (!string.IsNullOrEmpty(charName))
 							_config.CharacterName = charName;
 						_profileCharId = profileId;
@@ -8046,8 +8074,9 @@ RotationAbility rotationAbility6 = null;
 				SaveConfig();
 				Log("No profile found for '" + (charName2 ?? "none") + "', saving current settings to profile");
 			}
-			catch
+			catch (Exception ex)
 			{
+				Log("LoadConfig error: " + ex);
 			}
 		}
 
