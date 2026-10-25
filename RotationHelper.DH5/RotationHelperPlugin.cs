@@ -3249,6 +3249,7 @@ catch { }
 	private DateTime _lastNearbyLogTime = DateTime.MinValue;
 	private DateTime _lastNearbyOkLogTime = DateTime.MinValue;
 	private DateTime _lastEmergencyLogTime = DateTime.MinValue;
+	private DateTime _lastCooldownStaleLogTime = DateTime.MinValue;
 	private DateTime _lastPartyHealScanLogTime = DateTime.MinValue;
 	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
 
@@ -4147,8 +4148,14 @@ catch { }
 		SaveEmergency();
 	}
 
+	private int _pollBusy;
+
 	private void PollTrigger()
 	{
+		if (System.Threading.Interlocked.Exchange(ref _pollBusy, 1) != 0)
+		{
+			return;
+		}
 		try
 		{
 			if (_config == null)
@@ -4219,6 +4226,10 @@ catch { }
 		catch (Exception ex)
 		{
 			Log("PollTrigger error: " + ex.Message);
+		}
+		finally
+		{
+			System.Threading.Interlocked.Exchange(ref _pollBusy, 0);
 		}
 	}
 
@@ -4600,7 +4611,11 @@ catch { }
 			}
 			if (!double.IsNaN(num) && Math.Abs(num3 - num) < 0.01)
 			{
-				Log($"COOLDOWN [{ability.Name}] gameTime stale (still {num3:F1}) — expired, ready");
+				if ((DateTime.UtcNow - _lastCooldownStaleLogTime).TotalSeconds >= 30.0)
+				{
+					_lastCooldownStaleLogTime = DateTime.UtcNow;
+					Log($"COOLDOWN [{ability.Name}] gameTime stale (still {num3:F1}) - expired, ready");
+				}
 				return 0L;
 			}
 			uint[] array = new uint[3] { ability.CooldownTimerDid1, ability.CooldownTimerDid2, ability.CooldownTimerDid3 };
