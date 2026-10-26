@@ -1763,7 +1763,7 @@ public class ImGuiConfigWindow
 	{
 		int removeAt = -1;
 		bool manualCd = _manualCdMode;
-		if (ImGuiNET.ImGui.BeginTable("##rottable", 8,
+		if (ImGuiNET.ImGui.BeginTable("##rottable", 9,
 			ImGuiNET.ImGuiTableFlags.Borders |
 			ImGuiNET.ImGuiTableFlags.RowBg |
 			ImGuiNET.ImGuiTableFlags.ScrollY |
@@ -1779,6 +1779,7 @@ public class ImGuiConfigWindow
 			ImGuiNET.ImGui.TableSetupColumn("HP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
 			ImGuiNET.ImGui.TableSetupColumn("SP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
 			ImGuiNET.ImGui.TableSetupColumn("Champion", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 118f);
+			ImGuiNET.ImGui.TableSetupColumn("", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 26f);
 			ImGuiNET.ImGui.TableHeadersRow();
 			for (int i = 0; i < _plugin.Rotation.Count; i++)
 			{
@@ -1881,11 +1882,20 @@ public class ImGuiConfigWindow
 					ImGuiNET.ImGui.EndCombo();
 				}
 			ImGuiNET.ImGui.TableNextColumn();
+			if (ImGuiNET.ImGui.SmallButton("X##rotDel"))
+			{
+				removeAt = i;
+			}
 			ImGuiNET.ImGui.PopID();
 		}
 			ImGuiNET.ImGui.EndTable();
 		}
-		_ = removeAt;
+		if (removeAt >= 0 && removeAt < _plugin.Rotation.Count)
+		{
+			_plugin.Rotation.RemoveAt(removeAt);
+			_rotSelectedIndex = -1;
+			_plugin.SaveRotation();
+		}
 	}
 
 	private void RenderToggleTab()
@@ -3488,6 +3498,7 @@ catch { }
 	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
 	private DateTime _lastAutoTargetDiagLogTime = DateTime.MinValue;
 	private DateTime _lastChampionFilterLogTime = DateTime.MinValue;
+	private DateTime _lastTargetHpLogTime = DateTime.MinValue;
 
 	private ulong? _pendingEmergencyTargetId;
 
@@ -6514,7 +6525,11 @@ catch { }
 							int num14 = (int)((double)entity6.HitPoints_Current.Value / (double)entity6.HitPoints_Max.Value * 100.0);
 							if (num14 > rotationAbility5.TargetHpThreshold)
 							{
-								Log($"TARGET HP [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} — target HP={num14}% threshold={rotationAbility5.TargetHpThreshold}%");
+								if ((utcNow - _lastTargetHpLogTime).TotalSeconds >= 2.0)
+								{
+									_lastTargetHpLogTime = utcNow;
+									Log($"TARGET HP [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} - target HP={num14}% threshold={rotationAbility5.TargetHpThreshold}%");
+								}
 								continue;
 							}
 						}
@@ -6541,8 +6556,13 @@ catch { }
 					{
 						Log($"MELEE OUT OF RANGE [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} dist={distance:F1}");
 					}
-					else
+					else if (!IsOnCooldown(rotationAbility5))
 					{
+						// Only abilities that are actually ready go into the fire
+						// list. The fire loop below stops at the first success,
+						// so an ability that was still on cooldown used to be
+						// re-pressed every ~150ms tick and starved everything
+						// listed after it.
 						list.Add(rotationAbility5);
 					}
 				}
