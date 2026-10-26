@@ -1668,6 +1668,12 @@ public class ImGuiConfigWindow
 				config.AutoTargetClosestEnemy = closest;
 				_plugin.SaveConfig();
 			}
+			bool preferChamp = config.PreferChampionTargets;
+			if (ImGuiNET.ImGui.Checkbox("Prefer champions when auto targeting", ref preferChamp))
+			{
+				config.PreferChampionTargets = preferChamp;
+				_plugin.SaveConfig();
+			}
 			float range = config.AutoTargetMaxRange;
 			ImGuiNET.ImGui.SetNextItemWidth(120f);
 			if (ImGuiNET.ImGui.InputFloat("Max Range", ref range))
@@ -1757,7 +1763,7 @@ public class ImGuiConfigWindow
 	{
 		int removeAt = -1;
 		bool manualCd = _manualCdMode;
-		if (ImGuiNET.ImGui.BeginTable("##rottable", 7,
+		if (ImGuiNET.ImGui.BeginTable("##rottable", 8,
 			ImGuiNET.ImGuiTableFlags.Borders |
 			ImGuiNET.ImGuiTableFlags.RowBg |
 			ImGuiNET.ImGuiTableFlags.ScrollY |
@@ -1772,6 +1778,7 @@ public class ImGuiConfigWindow
 			ImGuiNET.ImGui.TableSetupColumn("Near", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
 			ImGuiNET.ImGui.TableSetupColumn("HP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
 			ImGuiNET.ImGui.TableSetupColumn("SP%", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 60f);
+			ImGuiNET.ImGui.TableSetupColumn("Champion", ImGuiNET.ImGuiTableColumnFlags.WidthFixed, 118f);
 			ImGuiNET.ImGui.TableHeadersRow();
 			for (int i = 0; i < _plugin.Rotation.Count; i++)
 			{
@@ -1846,6 +1853,32 @@ public class ImGuiConfigWindow
 				{
 					ability.MinSpThreshold = Math.Clamp(sp, 0, 100);
 					_plugin.SaveRotation();
+				}
+				ImGuiNET.ImGui.TableNextColumn();
+				string champFilter = ability.ChampionFilter;
+				if (string.IsNullOrEmpty(champFilter))
+				{
+					champFilter = "Any";
+				}
+				ImGuiNET.ImGui.SetNextItemWidth(-1f);
+				if (ImGuiNET.ImGui.BeginCombo("##champ", champFilter))
+				{
+					if (ImGuiNET.ImGui.Selectable("Any", champFilter == "Any"))
+					{
+						ability.ChampionFilter = "Any";
+						_plugin.SaveRotation();
+					}
+					if (ImGuiNET.ImGui.Selectable("Champions only", champFilter == "Champions only"))
+					{
+						ability.ChampionFilter = "Champions only";
+						_plugin.SaveRotation();
+					}
+					if (ImGuiNET.ImGui.Selectable("Skip champions", champFilter == "Skip champions"))
+					{
+						ability.ChampionFilter = "Skip champions";
+						_plugin.SaveRotation();
+					}
+					ImGuiNET.ImGui.EndCombo();
 				}
 			ImGuiNET.ImGui.TableNextColumn();
 			ImGuiNET.ImGui.PopID();
@@ -2991,6 +3024,14 @@ public class RotationAbility
 	public uint RequiredDebuffOnTargetDid { get; set; }
 
 	public uint RequiredEnhancementDid { get; set; }
+
+	/// <summary>
+	/// Whether this ability may be used when the current target is a champion.
+	/// "Any" = no restriction (default, matches old behaviour), "Champions
+	/// only" = fires only on champions, "Skip champions" = never fires on a
+	/// champion.
+	/// </summary>
+	public string ChampionFilter { get; set; } = "Any";
 }
 public class RotationConfig
 {
@@ -3053,6 +3094,12 @@ public class RotationConfig
 	public bool AutoTargetFurthestEnemy { get; set; } = false;
 
 	public bool AutoTargetClosestEnemy { get; set; } = false;
+
+	/// <summary>
+	/// When auto-targeting, pick a champion over a normal monster if one is in
+	/// range. Only has any effect while auto-targeting is switched on.
+	/// </summary>
+	public bool PreferChampionTargets { get; set; } = true;
 
 	public float AutoTargetMaxRange { get; set; } = 200f;
 
@@ -3440,6 +3487,7 @@ catch { }
 	private DateTime _lastPartyHealScanLogTime = DateTime.MinValue;
 	private DateTime _lastNoTargetLogTime = DateTime.MinValue;
 	private DateTime _lastAutoTargetDiagLogTime = DateTime.MinValue;
+	private DateTime _lastChampionFilterLogTime = DateTime.MinValue;
 
 	private ulong? _pendingEmergencyTargetId;
 
@@ -6417,7 +6465,24 @@ catch { }
 							if ((utcNow - _lastNoTargetLogTime).TotalSeconds >= 2.0)
 							{
 								_lastNoTargetLogTime = utcNow;
-								Log($"NO HOSTILE TARGET — rotation held (selected={_selectedObject?.Name ?? "none"})");
+								Log($"NO HOSTILE TARGET - rotation held (selected={_selectedObject?.Name ?? "none"})");
+							}
+							continue;
+						}
+					}
+					// Per-ability champion filter. Skipped entirely when the
+					// ability is left on "Any", so untouched abilities behave
+					// exactly as before and cost nothing extra.
+					string champFilter = rotationAbility5.ChampionFilter;
+					if (!string.IsNullOrEmpty(champFilter) && champFilter != "Any")
+					{
+						bool targetIsChampion = IsChampion(_selectedObject);
+						if (!ChampionFilterAllows(rotationAbility5, targetIsChampion))
+						{
+							if ((utcNow - _lastChampionFilterLogTime).TotalSeconds >= 2.0)
+							{
+								_lastChampionFilterLogTime = utcNow;
+								Log($"CHAMPION FILTER: holding [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} ({champFilter}, target={_selectedObject?.Name ?? "none"}, champion={targetIsChampion})");
 							}
 							continue;
 						}
@@ -6974,6 +7039,9 @@ RotationAbility rotationAbility6 = null;
 			double num = _config.AutoTargetMaxRange;
 			double num2 = -1.0;
 			IEntity entity2 = null;
+			bool preferChampions = _config != null && _config.PreferChampionTargets;
+			double champNum = -1.0;
+			IEntity champEntity = null;
 			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
 			if (readOnlyCollection != null && readOnlyCollection.Count > 0)
 			{
@@ -6992,8 +7060,17 @@ RotationAbility rotationAbility6 = null;
 							num2 = num3;
 							entity2 = item;
 						}
+						if (preferChampions && num3 > champNum && (!(num > 0.0) || !(num3 > num)) && IsChampion(item))
+						{
+							champNum = num3;
+							champEntity = item;
+						}
 					}
 				}
+			}
+			if (preferChampions && champEntity != null)
+			{
+				entity2 = champEntity;
 			}
 			if (entity2 == null)
 			{
@@ -7046,6 +7123,9 @@ RotationAbility rotationAbility6 = null;
 			double num = _config.AutoTargetMaxRange;
 			double num2 = double.MaxValue;
 			IEntity entity2 = null;
+			bool preferChampions = _config != null && _config.PreferChampionTargets;
+			double champNum = double.MaxValue;
+			IEntity champEntity = null;
 			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
 			if (readOnlyCollection != null && readOnlyCollection.Count > 0)
 			{
@@ -7064,8 +7144,17 @@ RotationAbility rotationAbility6 = null;
 							num2 = num3;
 							entity2 = item;
 						}
+						if (preferChampions && num3 < champNum && (!(num > 0.0) || !(num3 > num)) && IsChampion(item))
+						{
+							champNum = num3;
+							champEntity = item;
+						}
 					}
 				}
+			}
+			if (preferChampions && champEntity != null)
+			{
+				entity2 = champEntity;
 			}
 			if (entity2 == null)
 			{
@@ -7144,6 +7233,61 @@ RotationAbility rotationAbility6 = null;
 		{
 		}
 		return null;
+	}
+
+	/// <summary>
+	/// Property id for DdoProperty.Monster_Champion_Type (0x1000AB08). Zero
+	/// means an ordinary monster; anything else means a champion (the value
+	/// also encodes the champion flavour).
+	/// </summary>
+	internal const uint ChampionTypePropertyDid = 268479240u;
+
+	/// <summary>
+	/// True when the entity is a champion. Unknown/absent property counts as
+	/// "not a champion" so existing behaviour is preserved when the game does
+	/// not expose the tag.
+	/// </summary>
+	private bool IsChampion(IEntity entity)
+	{
+		if (entity == null)
+		{
+			return false;
+		}
+		try
+		{
+			long? value = ReadPropertyLong(entity.GetProperty(ChampionTypePropertyDid));
+			return value.HasValue && value.Value != 0L;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// Applies a single ability's ChampionFilter to the current target.
+	/// "Any" allows everything (so untouched abilities behave as before).
+	/// </summary>
+	private static bool ChampionFilterAllows(RotationAbility ability, bool targetIsChampion)
+	{
+		if (ability == null)
+		{
+			return true;
+		}
+		string filter = ability.ChampionFilter;
+		if (string.IsNullOrEmpty(filter) || filter == "Any")
+		{
+			return true;
+		}
+		if (filter == "Champions only")
+		{
+			return targetIsChampion;
+		}
+		if (filter == "Skip champions")
+		{
+			return !targetIsChampion;
+		}
+		return true;
 	}
 
 	private bool IsHostileEntity(IEntity entity)
