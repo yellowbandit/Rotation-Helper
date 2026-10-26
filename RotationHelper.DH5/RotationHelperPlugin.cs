@@ -4590,7 +4590,7 @@ catch { }
 						int k = (startIdx + kk) % list.Count;
 						RotationAbility rotationAbility3 = list[k];
 						Log($"ROTATION check index={k}/{list.Count} name={rotationAbility3.Name}");
-						if (!IsOnCooldown(rotationAbility3))
+						if (!IsOnCooldownForAutocast(rotationAbility3))
 						{
 							if (!rotationAbility3.ReferenceDid.HasValue || rotationAbility3.ReferenceDid == 0 || (utcNow - rotationAbility3.LastFired).TotalMilliseconds < 150.0)
 							{
@@ -4805,6 +4805,30 @@ catch { }
 		}
 		double remaining = (double)ability.CooldownMs - (DateTime.UtcNow - ability.LastFired).TotalMilliseconds;
 		return (remaining > 0.0) ? (long)remaining : 0L;
+	}
+
+	// Autocast should fire the instant an ability is usable again in game. The
+	// stored CooldownMs value is an estimate used for display and manual timing
+	// only; gating autocast on it made abilities sit idle for several seconds
+	// after they were already available. So for autocast we trust the game's own
+	// cooldown timer plus a small spacing floor, which stops a single ability
+	// from machine-gunning its hotbar slot and cancelling whatever queued behind
+	// it.
+	private bool IsOnCooldownForAutocast(RotationAbility ability)
+	{
+		if (ability == null)
+		{
+			return true;
+		}
+		if (ability.ReferenceDid.GetValueOrDefault() == 0)
+		{
+			return false;
+		}
+		if (ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < 1000.0)
+		{
+			return true;
+		}
+		return GetEntityCooldownMs(ability) > 0L;
 	}
 
 	private long GetEntityCooldownMs(RotationAbility ability)
@@ -6556,7 +6580,7 @@ catch { }
 					{
 						Log($"MELEE OUT OF RANGE [{l}] [{rotationAbility5.KeyLabel}] {rotationAbility5.Name} dist={distance:F1}");
 					}
-					else if (!IsOnCooldown(rotationAbility5))
+					else if (!IsOnCooldownForAutocast(rotationAbility5))
 					{
 						// Only abilities that are actually ready go into the fire
 						// list. The fire loop below stops at the first success,
