@@ -4828,7 +4828,17 @@ catch { }
 		{
 			return true;
 		}
-		return GetEntityCooldownMs(ability) > 0L;
+		if (GetEntityCooldownMs(ability) > 0L)
+		{
+			return true;
+		}
+		// The game-time property this plugin reads does not actually advance, so
+		// entity cooldowns come back as "ready" almost every time. That left the
+		// 1s floor as the only brake and the first ability in the list re-pressed
+		// its hotbar slot every second forever, stealing the global recast from
+		// everything behind it. Fall back to the per-ability cooldown value (the
+		// number shown in the CD(s) column) so each ability waits its own turn.
+		return GetManualCooldownRemainingMs(ability) > 0L;
 	}
 
 	private long GetEntityCooldownMs(RotationAbility ability)
