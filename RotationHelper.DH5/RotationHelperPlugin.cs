@@ -3537,6 +3537,10 @@ catch { }
 	internal DateTime _lastHotbarUsageTime = DateTime.MinValue;
 
 	internal DateTime _lastMapChangeTime = DateTime.MinValue;
+	// Last area DID DH reported. DH raises OnMapAreaChange again and again for
+	// the same area, so this is what distinguishes a real zone change from a
+	// repeat raise.
+	internal uint _lastAreaDid = 0u;
 
 	private DateTime _lastCharacterCheckTime = DateTime.MinValue;
 
@@ -4343,17 +4347,21 @@ catch { }
 		{
 			lock (_lock)
 			{
+				// DH raises this event over and over for the same area (dozens of
+				// times a second in some zones). Every raise used to zero each
+				// ability's LastFired, so the whole rotation looked brand new at
+				// once and the plugin machine-gunned the hotbar. That spam ate the
+				// game's global recast, which is what made abilities feel like they
+				// were sitting unused. Only a genuinely different area counts as a
+				// zone change, and even then the per-ability cooldowns stay put.
+				if (newAreaDid == _lastAreaDid)
+				{
+					return Task.CompletedTask;
+				}
+				_lastAreaDid = newAreaDid;
 				_lastMapChangeTime = DateTime.UtcNow;
-				Log($"ZONE CHANGE detected (area 0x{newAreaDid:X8}) — resetting cooldown timers");
+				Log($"ZONE CHANGE detected (area 0x{newAreaDid:X8}) - resetting zone state");
 				_knownZoneDids.Add(newAreaDid);
-				foreach (RotationAbility item4 in Rotation)
-				{
-					item4.LastFired = DateTime.MinValue;
-				}
-				foreach (RotationAbility item5 in Emergency)
-				{
-					item5.LastFired = DateTime.MinValue;
-				}
 				ClearToggleCache();
 				_pendingEmergencyTargetId = null;
 				_pendingEmergencyAbility = null;
