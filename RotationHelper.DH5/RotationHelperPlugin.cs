@@ -3608,7 +3608,20 @@ catch { }
 		"AnimalGrowth", "TenaciousPack", "UnyieldingPack", "ShiftingPack", "BodyOfTheSun", "HasteSpells", "HasteClickies", "HastePots", "HasteScrolls", "EnableEquipmentControl"
 	};
 
-	private static uint GameTimeDid = 268443087u;
+	// Clock property (seconds) the cooldown timers are compared against.
+	// The old value 0x10001DCF is not a clock at all: it never advances, so
+	// every cooldown read either looked permanently expired or permanently
+	// active. 0x10002777 is DdoProperty.Time_CurrentTotalInGameTime.
+	private static uint GameTimeDid = 268445559u;
+
+	// Whether the value above has actually been seen to advance. When it has
+	// not, cooldowns cannot be read from the game and the per-ability CD(s)
+	// value has to be used instead.
+	private static double _lastObservedGameTime = double.NaN;
+	private static bool _gameClockTrusted = false;
+	private static DateTime _lastClockAdvanceUtc = DateTime.MinValue;
+	private static DateTime _lastClockSampleUtc = DateTime.MinValue;
+	private static bool _lastClockSampleTrusted = false;
 
 	// Flip to true only when debugging cooldown timing; leaving it on floods
 	// cdiag.log (~200 lines/sec) because the check runs every autocast tick.
@@ -4814,6 +4827,47 @@ catch { }
 	// cooldown timer plus a small spacing floor, which stops a single ability
 	// from machine-gunning its hotbar slot and cancelling whatever queued behind
 	// it.
+	// Returns true only while the in-game clock is really ticking. If it is
+	// frozen the cooldown timers cannot be interpreted, so callers have to fall
+	// back to the CD(s) value instead. Sampled at most every 100 ms so the
+	// per-tick per-ability checks stay cheap.
+	private bool GameClockIsAdvancing()
+	{
+		if ((DateTime.UtcNow - _lastClockSampleUtc).TotalMilliseconds < 100.0)
+		{
+			return _lastClockSampleTrusted;
+		}
+		_lastClockSampleUtc = DateTime.UtcNow;
+		bool trusted = _gameClockTrusted && (DateTime.UtcNow - _lastClockAdvanceUtc).TotalSeconds <= 5.0;
+		try
+		{
+			IEntity currentCharacter = _currentEntity;
+			IProperty property = currentCharacter?.GetProperty(GameTimeDid);
+			if (property?.Value != null)
+			{
+				double now = Convert.ToDouble(property.Value);
+				if (now > 0.0)
+				{
+					if (!double.IsNaN(_lastObservedGameTime) && now - _lastObservedGameTime > 0.001)
+					{
+						_gameClockTrusted = true;
+						_lastClockAdvanceUtc = DateTime.UtcNow;
+					}
+					if (double.IsNaN(_lastObservedGameTime) || now > _lastObservedGameTime)
+					{
+						_lastObservedGameTime = now;
+					}
+					trusted = _gameClockTrusted && (DateTime.UtcNow - _lastClockAdvanceUtc).TotalSeconds <= 5.0;
+				}
+			}
+		}
+		catch
+		{
+		}
+		_lastClockSampleTrusted = trusted;
+		return trusted;
+	}
+
 	private bool IsOnCooldownForAutocast(RotationAbility ability)
 	{
 		if (ability == null)
@@ -4824,7 +4878,9 @@ catch { }
 		{
 			return false;
 		}
-		if (ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < 1000.0)
+		bool clockTrusted = GameClockIsAdvancing();
+		double spacingFloorMs = clockTrusted ? 250.0 : 1000.0;
+		if (ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < spacingFloorMs)
 		{
 			return true;
 		}
@@ -4832,12 +4888,16 @@ catch { }
 		{
 			return true;
 		}
-		// The game-time property this plugin reads does not actually advance, so
-		// entity cooldowns come back as "ready" almost every time. That left the
-		// 1s floor as the only brake and the first ability in the list re-pressed
-		// its hotbar slot every second forever, stealing the global recast from
-		// everything behind it. Fall back to the per-ability cooldown value (the
-		// number shown in the CD(s) column) so each ability waits its own turn.
+		// Game clock is ticking, so the timer read above is trustworthy: the
+		// ability really is ready and waiting any longer just adds delay.
+		if (clockTrusted)
+		{
+			return false;
+		}
+		// Clock is frozen, so game cooldowns cannot be read. Fall back to the
+		// per-ability cooldown value (the CD(s) column) so each ability waits
+		// its own turn instead of one ability re-pressing its hotbar slot every
+		// second and stealing the global recast from everything behind it.
 		return GetManualCooldownRemainingMs(ability) > 0L;
 	}
 
@@ -4934,6 +4994,13 @@ catch { }
 				if (num5 > num3)
 				{
 					double num6 = num5 - num3;
+					// Guard against a mis-read timer: anything claiming more than
+					// five minutes left is treated as garbage rather than being
+					// allowed to lock that ability out permanently.
+					if (num6 > 300.0)
+					{
+						continue;
+					}
 					long result = (long)(num6 * 1000.0);
 					if (CooldownDiagEnabled) { try { System.IO.File.AppendAllText(System.IO.Path.Combine(RotationHelperPlugin.AppDataDir, "cdiag.log"), $"[{DateTime.Now:HH:mm:ss.fff}] CD [{ability.Name}] did=0x{num4:X8} timer={num5:F2} gameTime={num3:F2} result={result}ms\r\n"); } catch {} }
 					lock (_cacheLock)
@@ -6600,7 +6667,12 @@ catch { }
 						list.Add(rotationAbility5);
 					}
 				}
-RotationAbility rotationAbility6 = null;
+				// Fire the ability that has been waiting the longest, not simply
+				// the one nearest the top of the list. Otherwise the top entry
+				// wins every tick and everything below it can sit unused for
+				// seconds even though it is available.
+				RotationAbility rotationAbility6 = null;
+				list.Sort((RotationAbility a, RotationAbility b) => a.LastFired.CompareTo(b.LastFired));
 				foreach (RotationAbility candidate in list)
 				{
 					if (FireAbility(candidate, skipCooldown: true))
