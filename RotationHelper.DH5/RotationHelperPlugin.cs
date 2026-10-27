@@ -3542,6 +3542,12 @@ catch { }
 	// repeat raise.
 	internal uint _lastAreaDid = 0u;
 
+	// The game tells us every time it actually accepts a hotbar activation.
+	// That is a real signal ("this cast happened") instead of a cooldown guess,
+	// so it is used to space presses without waiting out an invented number.
+	private DateTime _lastHotbarUsageUtc = DateTime.MinValue;
+	private DateTime _lastHotbarUsageLogUtc = DateTime.MinValue;
+
 	private DateTime _lastCharacterCheckTime = DateTime.MinValue;
 
 	internal DateTime? _lastSuccessfulTick = null;
@@ -4343,6 +4349,34 @@ catch { }
 			}
 			return Task.CompletedTask;
 		});
+		// The game confirms every hotbar activation it actually accepts. Recording
+		// that gives the rotation a true "a cast just happened" signal, so presses
+		// can be spaced from real confirmations instead of estimated cooldowns.
+		_eventProvider.OnHotbarUsage.AddHandler(delegate(IHotbarSlot usedSlot)
+		{
+			try
+			{
+				if (usedSlot != null)
+				{
+					lock (_lock)
+					{
+						_lastHotbarUsageUtc = DateTime.UtcNow;
+						foreach (RotationAbility confirmed in Rotation)
+						{
+							if (confirmed.InvokeBar.HasValue && confirmed.InvokeSlot.HasValue && confirmed.InvokeBar.Value == usedSlot.Bar && confirmed.InvokeSlot.Value == usedSlot.Slot)
+							{
+								confirmed.LastFired = DateTime.UtcNow;
+								break;
+							}
+						}
+					}
+				}
+			}
+			catch
+			{
+			}
+			return Task.CompletedTask;
+		});
 		_eventProvider.OnMapAreaChange.AddHandler(delegate(uint newAreaDid)
 		{
 			lock (_lock)
@@ -4887,7 +4921,10 @@ catch { }
 			return false;
 		}
 		bool clockTrusted = GameClockIsAdvancing();
-		double spacingFloorMs = clockTrusted ? 250.0 : 1000.0;
+		// Short spacing floor. A refused press costs nothing in game, so there is
+		// no reason to sit out a long invented cooldown; the real limit is the
+		// global recast, which is tracked from confirmed hotbar uses below.
+		double spacingFloorMs = clockTrusted ? 250.0 : 400.0;
 		if (ability.LastFired != default(DateTime) && (DateTime.UtcNow - ability.LastFired).TotalMilliseconds < spacingFloorMs)
 		{
 			return true;
@@ -4902,11 +4939,13 @@ catch { }
 		{
 			return false;
 		}
-		// Clock is frozen, so game cooldowns cannot be read. Fall back to the
-		// per-ability cooldown value (the CD(s) column) so each ability waits
-		// its own turn instead of one ability re-pressing its hotbar slot every
-		// second and stealing the global recast from everything behind it.
-		return GetManualCooldownRemainingMs(ability) > 0L;
+		// The clock is frozen, so individual cooldowns cannot be read. Rather than
+		// waiting out the estimated CD(s) value - which left abilities sitting idle
+		// for seconds after they were already usable again - only hold everything
+		// for a moment after the game confirms a cast, then let this ability try.
+		// If it really is still recovering the game ignores the press and the next
+		// ability in the rotation gets its turn a fraction of a second later.
+		return (DateTime.UtcNow - _lastHotbarUsageUtc).TotalMilliseconds < 350.0;
 	}
 
 	private long GetEntityCooldownMs(RotationAbility ability)
