@@ -1703,6 +1703,13 @@ public class ImGuiConfigWindow
 				config.NearRadiusUnits = nearRadius;
 				_plugin.SaveConfig();
 			}
+			int castSpacing = config.CastSpacingMs;
+			ImGuiNET.ImGui.SetNextItemWidth(120f);
+			if (ImGuiNET.ImGui.InputInt("Cast spacing (ms)", ref castSpacing))
+			{
+				config.CastSpacingMs = Math.Clamp(castSpacing, 200, 5000);
+				_plugin.SaveConfig();
+			}
 			ImGuiNET.ImGui.Separator();
 			ImGuiNET.ImGui.Text("Rotation Abilities");
 			RenderRotationTable();
@@ -3125,6 +3132,11 @@ public class RotationConfig
 
 	// Radius (game units) used by the "Near" (MinNearbyEnemies) gate when
 	// counting enemies. 6u is about the reach of an AoE; tunable.
+	// Minimum gap in milliseconds between any two rotation presses. The game
+	// has its own global recast; pressing faster than that just gets the press
+	// silently ignored, which looks like the ability never fired.
+	public int CastSpacingMs { get; set; } = 800;
+
 	public float NearRadiusUnits { get; set; } = 6f;
 
 public List<uint> EnabledZoneDids { get; set; } = new List<uint>();
@@ -3546,6 +3558,10 @@ catch { }
 	// That is a real signal ("this cast happened") instead of a cooldown guess,
 	// so it is used to space presses without waiting out an invented number.
 	private DateTime _lastHotbarUsageUtc = DateTime.MinValue;
+	// When this plugin last actually pressed a rotation ability's hotbar slot.
+	// Used together with _lastHotbarUsageUtc to space presses out to roughly the
+	// game's own global recast instead of hammering it.
+	private DateTime _lastRotationFireUtc = DateTime.MinValue;
 	private DateTime _lastHotbarUsageLogUtc = DateTime.MinValue;
 
 	private DateTime _lastCharacterCheckTime = DateTime.MinValue;
@@ -4663,6 +4679,7 @@ catch { }
 								}
 								Log($"ROTATION fire index={k} name={rotationAbility3.Name}");
 								rotationAbility3.LastFired = DateTime.UtcNow;
+								_lastRotationFireUtc = DateTime.UtcNow;
 								flag = true;
 								_lastFireTime = DateTime.UtcNow;
 								_rotationIndex = (k + 1) % list.Count;
@@ -4939,13 +4956,18 @@ catch { }
 		{
 			return false;
 		}
-		// The clock is frozen, so individual cooldowns cannot be read. Rather than
-		// waiting out the estimated CD(s) value - which left abilities sitting idle
-		// for seconds after they were already usable again - only hold everything
-		// for a moment after the game confirms a cast, then let this ability try.
-		// If it really is still recovering the game ignores the press and the next
-		// ability in the rotation gets its turn a fraction of a second later.
-		return (DateTime.UtcNow - _lastHotbarUsageUtc).TotalMilliseconds < 350.0;
+		// The clock is frozen, so individual cooldowns cannot be read. Pressing
+		// faster than the game's own global recast does nothing except get the
+		// press swallowed, which in game looks exactly like "the ability never
+		// fired". So pace the whole rotation: one press per CastSpacingMs across
+		// every ability, longest-waiting first.
+		double spacing = ((_config != null && _config.CastSpacingMs > 0) ? ((double)_config.CastSpacingMs) : 800.0);
+		DateTime lastActivity = _lastRotationFireUtc;
+		if (_lastHotbarUsageUtc > lastActivity)
+		{
+			lastActivity = _lastHotbarUsageUtc;
+		}
+		return lastActivity != DateTime.MinValue && (DateTime.UtcNow - lastActivity).TotalMilliseconds < spacing;
 	}
 
 	private long GetEntityCooldownMs(RotationAbility ability)
@@ -5080,7 +5102,22 @@ catch { }
 		{
 			return entityCooldownMs;
 		}
-		return GetManualCooldownRemainingMs(ability);
+		// Nothing readable from the game, so report the remaining share of the
+		// rotation-wide cast spacing instead of the manual CD(s) estimate - that
+		// estimate is what used to make a held trigger sleep for seconds.
+		double spacing = ((_config != null && _config.CastSpacingMs > 0) ? ((double)_config.CastSpacingMs) : 800.0);
+		DateTime lastActivity = _lastRotationFireUtc;
+		if (_lastHotbarUsageUtc > lastActivity)
+		{
+			lastActivity = _lastHotbarUsageUtc;
+		}
+		if (lastActivity == DateTime.MinValue)
+		{
+			return 0L;
+		}
+		double elapsed = (DateTime.UtcNow - lastActivity).TotalMilliseconds;
+		double remaining = spacing - elapsed;
+		return (remaining > 0.0) ? ((long)remaining) : 0L;
 	}
 
 	// Emergency heals must not be attempted (or retargeted) while the spell is
@@ -6731,6 +6768,7 @@ catch { }
 				if (rotationAbility6 != null)
 				{
 					rotationAbility6.LastFired = DateTime.UtcNow;
+					_lastRotationFireUtc = DateTime.UtcNow;
 					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name);
 				}
 			}
