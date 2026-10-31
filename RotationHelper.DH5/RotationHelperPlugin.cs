@@ -1669,7 +1669,7 @@ public class ImGuiConfigWindow
 				_plugin.SaveConfig();
 			}
 			bool preferChamp = config.PreferChampionTargets;
-			if (ImGuiNET.ImGui.Checkbox("Prefer champions when auto targeting", ref preferChamp))
+			if (ImGuiNET.ImGui.Checkbox("Prefer Reaper > champion > caster > normal", ref preferChamp))
 			{
 				config.PreferChampionTargets = preferChamp;
 				_plugin.SaveConfig();
@@ -7250,7 +7250,7 @@ catch { }
 			double num = _config.AutoTargetMaxRange;
 			double num2 = -1.0;
 			IEntity entity2 = null;
-			bool preferChampions = _config != null && _config.PreferChampionTargets;
+			bool preferByType = _config != null && _config.PreferChampionTargets;
 			double champNum = -1.0;
 			IEntity champEntity = null;
 			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
@@ -7271,7 +7271,7 @@ catch { }
 							num2 = num3;
 							entity2 = item;
 						}
-						if (preferChampions && num3 > champNum && (!(num > 0.0) || !(num3 > num)) && IsChampion(item))
+						if (preferByType && (!(num > 0.0) || !(num3 > num)) && IsBetterTarget(item, num3, champEntity, champNum, true))
 						{
 							champNum = num3;
 							champEntity = item;
@@ -7279,7 +7279,7 @@ catch { }
 					}
 				}
 			}
-			if (preferChampions && champEntity != null)
+			if (preferByType && champEntity != null)
 			{
 				entity2 = champEntity;
 			}
@@ -7334,7 +7334,7 @@ catch { }
 			double num = _config.AutoTargetMaxRange;
 			double num2 = double.MaxValue;
 			IEntity entity2 = null;
-			bool preferChampions = _config != null && _config.PreferChampionTargets;
+			bool preferByType = _config != null && _config.PreferChampionTargets;
 			double champNum = double.MaxValue;
 			IEntity champEntity = null;
 			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
@@ -7355,7 +7355,7 @@ catch { }
 							num2 = num3;
 							entity2 = item;
 						}
-						if (preferChampions && num3 < champNum && (!(num > 0.0) || !(num3 > num)) && IsChampion(item))
+						if (preferByType && (!(num > 0.0) || !(num3 > num)) && IsBetterTarget(item, num3, champEntity, champNum, false))
 						{
 							champNum = num3;
 							champEntity = item;
@@ -7363,7 +7363,7 @@ catch { }
 					}
 				}
 			}
-			if (preferChampions && champEntity != null)
+			if (preferByType && champEntity != null)
 			{
 				entity2 = champEntity;
 			}
@@ -7458,6 +7458,67 @@ catch { }
 	/// "not a champion" so existing behaviour is preserved when the game does
 	/// not expose the tag.
 	/// </summary>
+	private int TargetPriorityTier(IEntity entity)
+	{
+		if (entity == null) return 3;
+		if (IsReaperEntity(entity)) return 0;
+		if (IsChampion(entity)) return 1;
+		if (IsCasterEntity(entity)) return 2;
+		return 3;
+	}
+
+	private static bool NameHasAny(string name, string[] keys)
+	{
+		if (string.IsNullOrEmpty(name)) return false;
+		for (int i = 0; i < keys.Length; i++)
+		{
+			if (name.IndexOf(keys[i], StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		}
+		return false;
+	}
+
+	private bool IsReaperEntity(IEntity entity)
+	{
+		try
+		{
+			if (entity == null) return false;
+			if (NameHasAny(entity.Name, ReaperNameKeys)) return true;
+			return NameHasAny(entity.WeenieName, ReaperNameKeys);
+		}
+		catch { return false; }
+	}
+
+	private bool IsCasterEntity(IEntity entity)
+	{
+		try
+		{
+			if (entity == null) return false;
+			if (NameHasAny(entity.Name, CasterNameKeys)) return true;
+			return NameHasAny(entity.WeenieName, CasterNameKeys);
+		}
+		catch { return false; }
+	}
+
+	private bool IsBetterTarget(IEntity candidate, double candidateDistance, IEntity best, double bestDistance, bool furthest)
+	{
+		if (candidate == null) return false;
+		if (best == null) return true;
+		int candidateTier = TargetPriorityTier(candidate);
+		int bestTier = TargetPriorityTier(best);
+		if (candidateTier != bestTier) return candidateTier < bestTier;
+		return furthest ? (candidateDistance > bestDistance) : (candidateDistance < bestDistance);
+	}
+
+	private static readonly string[] ReaperNameKeys = new string[] { "reaper" };
+
+	private static readonly string[] CasterNameKeys = new string[]
+	{
+		"shaman", "wizard", "sorcer", "mage", "warlock", "witch", "priest", "cleric",
+		"adept", "cultist", "necromancer", "conjurer", "summoner", "evoker", "illusionist",
+		"enchanter", "diviner", "abjurer", "transmuter", "druid", "oracle", "prophet",
+		"seer", "hexer", "archmage", "ritualist", "yuan-ti", "mind flayer", "beholder", "hag"
+	};
+
 	private bool IsChampion(IEntity entity)
 	{
 		if (entity == null)
