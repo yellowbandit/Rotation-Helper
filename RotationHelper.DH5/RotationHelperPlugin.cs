@@ -3562,6 +3562,18 @@ catch { }
 	// Used together with _lastHotbarUsageUtc to space presses out to roughly the
 	// game's own global recast instead of hammering it.
 	private DateTime _lastRotationFireUtc = DateTime.MinValue;
+
+	// Learned per-ability cooldown state, read straight from the ability's own
+	// timer property. See AbilityTimerSaysCooling.
+	private sealed class AbilityTimerState
+	{
+		public bool SeenZero;
+		public bool Cooling;
+		public DateTime CoolingSinceUtc = DateTime.MinValue;
+		public bool LoggedUntrusted;
+	}
+
+	private readonly System.Collections.Generic.Dictionary<uint, AbilityTimerState> _abilityTimerStates = new System.Collections.Generic.Dictionary<uint, AbilityTimerState>();
 	private DateTime _lastHotbarUsageLogUtc = DateTime.MinValue;
 
 	private DateTime _lastCharacterCheckTime = DateTime.MinValue;
@@ -4927,6 +4939,92 @@ catch { }
 		return trusted;
 	}
 
+	// Reads the ability's own timer property to see whether the game currently
+	// considers it to be recovering. Each ability carries its own timer property
+	// id (CooldownTimerDid2). While the ability is cooling that property holds a
+	// non-zero value; once the ability can be used again it reads zero. That
+	// needs no clock at all, which matters because the game clock cannot be read.
+	//
+	// Some timer properties are absolute timestamps that are never zero. In that
+	// case SeenZero never becomes true and the ability is never treated as
+	// cooling, so behaviour is exactly what it was before this check existed.
+	private bool AbilityTimerSaysCooling(RotationAbility ability)
+	{
+		if (ability == null || !ability.ReferenceDid.HasValue)
+		{
+			return false;
+		}
+		uint did = ability.CooldownTimerDid2;
+		if (did == 0u || did == GameTimeDid)
+		{
+			return false;
+		}
+		IEntity current = _currentEntity;
+		if (current == null)
+		{
+			return false;
+		}
+		uint key = ability.ReferenceDid.Value;
+		AbilityTimerState state;
+		lock (_cacheLock)
+		{
+			if (!_abilityTimerStates.TryGetValue(key, out state))
+			{
+				state = new AbilityTimerState();
+				_abilityTimerStates[key] = state;
+			}
+		}
+		double raw;
+		try
+		{
+			IProperty property = current.GetProperty(did);
+			if (property?.Value == null)
+			{
+				return false;
+			}
+			raw = Convert.ToDouble(property.Value);
+		}
+		catch
+		{
+			return false;
+		}
+		DateTime utcNow = DateTime.UtcNow;
+		if (raw <= 0.0)
+		{
+			if (!state.SeenZero)
+			{
+				state.SeenZero = true;
+				Log($"CDTIMER [{ability.Name}] reads zero - per-ability cooldown tracking active");
+			}
+			if (state.Cooling)
+			{
+				state.Cooling = false;
+				if (state.CoolingSinceUtc != DateTime.MinValue)
+				{
+					double lasted = (utcNow - state.CoolingSinceUtc).TotalMilliseconds;
+					Log($"CDTIMER [{ability.Name}] ready again after {lasted:F0}ms");
+					state.CoolingSinceUtc = DateTime.MinValue;
+				}
+			}
+			return false;
+		}
+		if (!state.SeenZero)
+		{
+			if (!state.LoggedUntrusted)
+			{
+				state.LoggedUntrusted = true;
+				Log($"CDTIMER [{ability.Name}] raw={raw:F1} and never zero - not using it for pacing");
+			}
+			return false;
+		}
+		if (!state.Cooling)
+		{
+			state.Cooling = true;
+			state.CoolingSinceUtc = utcNow;
+		}
+		return true;
+	}
+
 	private bool IsOnCooldownForAutocast(RotationAbility ability)
 	{
 		if (ability == null)
@@ -4936,6 +5034,15 @@ catch { }
 		if (ability.ReferenceDid.GetValueOrDefault() == 0)
 		{
 			return false;
+		}
+		// Per-ability readiness straight from the game. If this ability's own
+		// timer still shows it recovering, skip it so its press slot goes to an
+		// ability that can actually be used right now. Before this, every
+		// ability got an equal share of presses and most of them were thrown
+		// away by the game, which is why one ability could sit ready for seconds.
+		if (AbilityTimerSaysCooling(ability))
+		{
+			return true;
 		}
 		bool clockTrusted = GameClockIsAdvancing();
 		// Short spacing floor. A refused press costs nothing in game, so there is
@@ -4962,6 +5069,12 @@ catch { }
 		// fired". So pace the whole rotation: one press per CastSpacingMs across
 		// every ability, longest-waiting first.
 		double spacing = ((_config != null && _config.CastSpacingMs > 0) ? ((double)_config.CastSpacingMs) : 800.0);
+		// Presses that arrive faster than the game's own global recast are simply
+		// swallowed, so anything under half a second is wasted effort.
+		if (spacing < 500.0)
+		{
+			spacing = 500.0;
+		}
 		DateTime lastActivity = _lastRotationFireUtc;
 		if (_lastHotbarUsageUtc > lastActivity)
 		{
@@ -5106,6 +5219,12 @@ catch { }
 		// rotation-wide cast spacing instead of the manual CD(s) estimate - that
 		// estimate is what used to make a held trigger sleep for seconds.
 		double spacing = ((_config != null && _config.CastSpacingMs > 0) ? ((double)_config.CastSpacingMs) : 800.0);
+		// Presses that arrive faster than the game's own global recast are simply
+		// swallowed, so anything under half a second is wasted effort.
+		if (spacing < 500.0)
+		{
+			spacing = 500.0;
+		}
 		DateTime lastActivity = _lastRotationFireUtc;
 		if (_lastHotbarUsageUtc > lastActivity)
 		{
