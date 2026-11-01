@@ -6832,7 +6832,17 @@ catch { }
 								_lastNoTargetLogTime = utcNow;
 								Log($"NO HOSTILE TARGET - rotation held (selected={_selectedObject?.Name ?? "none"})");
 							}
-							continue;
+							// With auto-targeting switched on, freezing the whole rotation
+							// because nothing is selected defeats the purpose - abilities
+							// must keep firing. Auto-target runs on its own schedule, so
+							// only abilities that genuinely need a target are held; for
+							// everything else the hold is skipped entirely.
+							bool autoTargetOn = _config != null && (_config.AutoTargetClosestEnemy || _config.AutoTargetFurthestEnemy);
+							bool needsTarget = rotationAbility5.RequiresTarget || (rotationAbility5.TargetType == "Hostile" || rotationAbility5.TargetType == "Enemy");
+							if (!autoTargetOn || needsTarget)
+							{
+								continue;
+							}
 						}
 					}
 					// Per-ability champion filter. Skipped entirely when the
