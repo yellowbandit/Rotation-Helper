@@ -3567,10 +3567,8 @@ catch { }
 	// timer property. See AbilityTimerSaysCooling.
 	private sealed class AbilityTimerState
 	{
-		public bool SeenZero;
 		public bool Cooling;
 		public DateTime CoolingSinceUtc = DateTime.MinValue;
-		public bool LoggedUntrusted;
 	}
 
 	private readonly System.Collections.Generic.Dictionary<uint, AbilityTimerState> _abilityTimerStates = new System.Collections.Generic.Dictionary<uint, AbilityTimerState>();
@@ -3656,6 +3654,12 @@ catch { }
 	// not, cooldowns cannot be read from the game and the per-ability CD(s)
 	// value has to be used instead.
 	private static double _lastObservedGameTime = double.NaN;
+
+	// Anchored copy of the game clock: a clock value we have seen plus the wall
+	// time it was seen at. The game clock advances with real time, so this is
+	// enough to convert a timer timestamp into "seconds from now".
+	private static double _gameClockAnchorValue = 0.0;
+	private static DateTime _gameClockAnchorUtc = DateTime.MinValue;
 	private static bool _gameClockTrusted = false;
 	private static DateTime _lastClockAdvanceUtc = DateTime.MinValue;
 	private static DateTime _lastClockSampleUtc = DateTime.MinValue;
@@ -4989,13 +4993,18 @@ catch { }
 			return false;
 		}
 		DateTime utcNow = DateTime.UtcNow;
-		if (raw <= 0.0)
+		double nowEstimate = EstimatedGameClock();
+		if (nowEstimate <= 0.0)
 		{
-			if (!state.SeenZero)
-			{
-				state.SeenZero = true;
-				Log($"CDTIMER [{ability.Name}] reads zero - per-ability cooldown tracking active");
-			}
+			AnchorGameClock(raw);
+			return false;
+		}
+		double remaining = raw - nowEstimate;
+		if (remaining <= 0.5)
+		{
+			// Ready. The timer holds "now" for a usable ability, which makes it a
+			// free clock sample - use it to keep the estimate fresh.
+			AnchorGameClock(raw);
 			if (state.Cooling)
 			{
 				state.Cooling = false;
@@ -5008,21 +5017,44 @@ catch { }
 			}
 			return false;
 		}
-		if (!state.SeenZero)
+		if (remaining > 3600.0)
 		{
-			if (!state.LoggedUntrusted)
-			{
-				state.LoggedUntrusted = true;
-				Log($"CDTIMER [{ability.Name}] raw={raw:F1} and never zero - not using it for pacing");
-			}
 			return false;
 		}
 		if (!state.Cooling)
 		{
 			state.Cooling = true;
 			state.CoolingSinceUtc = utcNow;
+			Log($"CDTIMER [{ability.Name}] cooling, about {remaining:F1}s left");
 		}
 		return true;
+	}
+
+	// The timer properties hold absolute timestamps in a game clock we cannot
+	// read directly, but that clock advances at real time while playing. So keep
+	// an anchor (a known clock value plus the wall time it was taken at) and
+	// extrapolate from it. A usable ability's timer reads "now", so every ready
+	// ability refreshes the anchor.
+	private void AnchorGameClock(double value)
+	{
+		if (value <= 0.0)
+		{
+			return;
+		}
+		if (value >= _gameClockAnchorValue)
+		{
+			_gameClockAnchorValue = value;
+			_gameClockAnchorUtc = DateTime.UtcNow;
+		}
+	}
+
+	private double EstimatedGameClock()
+	{
+		if (_gameClockAnchorValue <= 0.0 || _gameClockAnchorUtc == DateTime.MinValue)
+		{
+			return 0.0;
+		}
+		return _gameClockAnchorValue + (DateTime.UtcNow - _gameClockAnchorUtc).TotalSeconds;
 	}
 
 	private bool IsOnCooldownForAutocast(RotationAbility ability)
