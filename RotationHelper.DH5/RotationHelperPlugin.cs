@@ -6832,17 +6832,12 @@ catch { }
 								_lastNoTargetLogTime = utcNow;
 								Log($"NO HOSTILE TARGET - rotation held (selected={_selectedObject?.Name ?? "none"})");
 							}
-							// With auto-targeting switched on, freezing the whole rotation
-							// because nothing is selected defeats the purpose - abilities
-							// must keep firing. Auto-target runs on its own schedule, so
-							// only abilities that genuinely need a target are held; for
-							// everything else the hold is skipped entirely.
-							bool autoTargetOn = _config != null && (_config.AutoTargetClosestEnemy || _config.AutoTargetFurthestEnemy);
-							bool needsTarget = rotationAbility5.RequiresTarget || (rotationAbility5.TargetType == "Hostile" || rotationAbility5.TargetType == "Enemy");
-							if (!autoTargetOn || needsTarget)
-							{
-								continue;
-							}
+							// "Autocast rotation on target" means exactly that: while it
+							// is switched on nothing fires without a hostile target
+							// selected. It only looked like the option was ignored
+							// because auto-target could not acquire a target and the
+							// clock-drift bug blocked casting; both are fixed.
+							continue;
 						}
 					}
 					// Per-ability champion filter. Skipped entirely when the
