@@ -5090,10 +5090,13 @@ catch { }
 		// ability that can actually be used right now. Before this, every
 		// ability got an equal share of presses and most of them were thrown
 		// away by the game, which is why one ability could sit ready for seconds.
-		if (AbilityTimerSaysCooling(ability))
-		{
-			return true;
-		}
+		// The per-ability timer reading used to block here. It is not reliable
+		// enough for that: it made 6 second abilities claim 26 seconds were left
+		// and flipped between "ready" and "cooling" inside the same second, so
+		// abilities sat idle long after the game would have accepted them. It is
+		// still called so the CDTIMER log lines keep working, but it no longer
+		// decides anything.
+		AbilityTimerSaysCooling(ability);
 		bool clockTrusted = GameClockIsAdvancing();
 		// Short spacing floor. A refused press costs nothing in game, so there is
 		// no reason to sit out a long invented cooldown; the real limit is the
@@ -5107,12 +5110,9 @@ catch { }
 		{
 			return true;
 		}
-		// Game clock is ticking, so the timer read above is trustworthy: the
-		// ability really is ready and waiting any longer just adds delay.
-		if (clockTrusted)
-		{
-			return false;
-		}
+		// Pacing is the same whether or not the in-game clock ticks: one press at
+		// a time across the whole rotation. Pressing two abilities in the same
+		// instant just gets the second one swallowed.
 		// The clock is frozen, so individual cooldowns cannot be read. Pressing
 		// faster than the game's own global recast does nothing except get the
 		// press swallowed, which in game looks exactly like "the ability never
