@@ -5017,8 +5017,26 @@ catch { }
 			}
 			return false;
 		}
-		if (remaining > 3600.0)
+		// A real cooldown never lasts longer than the ability's own CD(s) value
+		// plus a little slack. Anything bigger means the clock estimate has
+		// drifted behind (loading screens, script pauses, idle time all stretch
+		// the gap), which used to make every ability look like it was still
+		// cooling for minutes and stopped autocast entirely. Treat a value that
+		// far out as a fresh clock sample and let the ability try.
+		double expectedMax = (((ability.CooldownMs > 0L) ? ((double)ability.CooldownMs / 1000.0) : 10.0) + 15.0);
+		if (expectedMax < 30.0)
 		{
+			expectedMax = 30.0;
+		}
+		if (remaining > expectedMax)
+		{
+			_gameClockAnchorValue = raw;
+			_gameClockAnchorUtc = utcNow;
+			if (state.Cooling)
+			{
+				state.Cooling = false;
+				state.CoolingSinceUtc = DateTime.MinValue;
+			}
 			return false;
 		}
 		if (!state.Cooling)
