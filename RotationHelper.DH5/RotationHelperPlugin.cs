@@ -7466,7 +7466,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}");
+				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReport(entity, entity2)}");
 			}
 		}
 		catch
@@ -7553,7 +7553,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}");
+				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReport(entity, entity2)}");
 			}
 		}
 		catch
@@ -7686,6 +7686,100 @@ catch { }
 	private int _atRejNotEnemy = 0;
 	private int _atRejDead = 0;
 	private int _atRejNoPos = 0;
+
+	// Diagnostic only. Every creature carries its own "visibility to enemies"
+	// flag. Nobody has documented what actually drives it, so it is measured
+	// here instead of guessed at: the auto-target log line now reports the flag
+	// of the creature it picked plus a count of the flags seen nearby.
+	private static readonly uint EnemyTargetVisibilityDid = 268446388u;
+
+	private int ReadEnemyVisibility(IEntity target)
+	{
+		try
+		{
+			if (target == null)
+			{
+				return -1;
+			}
+			long? raw = ReadPropertyLong(target.GetProperty(EnemyTargetVisibilityDid));
+			if (!raw.HasValue)
+			{
+				return -1;
+			}
+			return (int)raw.Value;
+		}
+		catch
+		{
+			return -1;
+		}
+	}
+
+	private static string VisibilityName(int value)
+	{
+		switch (value)
+		{
+		case 0:
+			return "not-set";
+		case 1:
+			return "invisible";
+		case 2:
+			return "concealed";
+		case 3:
+			return "visible";
+		default:
+			return "unknown";
+		}
+	}
+
+	private string VisibilityCensusReport(IEntity self, IEntity picked)
+	{
+		int num = 0;
+		int num2 = 0;
+		int num3 = 0;
+		int num4 = 0;
+		try
+		{
+			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
+			if (readOnlyCollection != null)
+			{
+				Vector3? vector = (self != null) ? GetEntityWorldPosition(self) : null;
+				double num5 = (_config != null) ? ((double)_config.AutoTargetMaxRange) : 0.0;
+				foreach (IEntity item in readOnlyCollection)
+				{
+					if (item == null || item.InstanceId == 0L || (self != null && item.InstanceId == self.InstanceId) || !IsCountedEnemy(item))
+					{
+						continue;
+					}
+					Vector3? vector2 = item.Location?.Position;
+					if (!vector2.HasValue || (vector.HasValue && num5 > 0.0 && Distance(vector.Value, vector2.Value) > num5))
+					{
+						continue;
+					}
+					int num6 = ReadEnemyVisibility(item);
+					if (num6 == 3)
+					{
+						num++;
+					}
+					else if (num6 == 1)
+					{
+						num2++;
+					}
+					else if (num6 == 2)
+					{
+						num3++;
+					}
+					else
+					{
+						num4++;
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return " vis: picked=" + VisibilityName(ReadEnemyVisibility(picked)) + " visible=" + num + " invisible=" + num2 + " concealed=" + num3 + " unknown=" + num4;
+	}
 
 	private bool TargetIsRejected(IEntity entity, IEntity self)
 	{
