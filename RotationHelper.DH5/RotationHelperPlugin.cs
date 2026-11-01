@@ -1703,13 +1703,6 @@ public class ImGuiConfigWindow
 				config.NearRadiusUnits = nearRadius;
 				_plugin.SaveConfig();
 			}
-			int castSpacing = config.CastSpacingMs;
-			ImGuiNET.ImGui.SetNextItemWidth(120f);
-			if (ImGuiNET.ImGui.InputInt("Cast spacing (ms)", ref castSpacing))
-			{
-				config.CastSpacingMs = Math.Clamp(castSpacing, 200, 5000);
-				_plugin.SaveConfig();
-			}
 			ImGuiNET.ImGui.Separator();
 			ImGuiNET.ImGui.Text("Rotation Abilities");
 			RenderRotationTable();
@@ -3132,10 +3125,9 @@ public class RotationConfig
 
 	// Radius (game units) used by the "Near" (MinNearbyEnemies) gate when
 	// counting enemies. 6u is about the reach of an AoE; tunable.
-	// Minimum gap in milliseconds between any two rotation presses. The game
-	// has its own global recast; pressing faster than that just gets the press
-	// silently ignored, which looks like the ability never fired.
-	public int CastSpacingMs { get; set; } = 800;
+	// Obsolete: press spacing is no longer user-configurable. Kept only so old
+	// saved settings files still load cleanly.
+	public int CastSpacingMs { get; set; } = 0;
 
 	public float NearRadiusUnits { get; set; } = 6f;
 
@@ -3561,6 +3553,7 @@ catch { }
 	// When this plugin last actually pressed a rotation ability's hotbar slot.
 	// Used together with _lastHotbarUsageUtc to space presses out to roughly the
 	// game's own global recast instead of hammering it.
+	private const double RotationPressGapMs = 300.0;
 	private DateTime _lastRotationFireUtc = DateTime.MinValue;
 
 	// Learned per-ability cooldown state, read straight from the ability's own
@@ -5113,18 +5106,12 @@ catch { }
 		// Pacing is the same whether or not the in-game clock ticks: one press at
 		// a time across the whole rotation. Pressing two abilities in the same
 		// instant just gets the second one swallowed.
-		// The clock is frozen, so individual cooldowns cannot be read. Pressing
-		// faster than the game's own global recast does nothing except get the
-		// press swallowed, which in game looks exactly like "the ability never
-		// fired". So pace the whole rotation: one press per CastSpacingMs across
-		// every ability, longest-waiting first.
-		double spacing = ((_config != null && _config.CastSpacingMs > 0) ? ((double)_config.CastSpacingMs) : 800.0);
-		// Presses that arrive faster than the game's own global recast are simply
-		// swallowed, so anything under half a second is wasted effort.
-		if (spacing < 500.0)
-		{
-			spacing = 500.0;
-		}
+		// The clock is frozen, so individual cooldowns cannot be read. The only
+		// pacing is one press attempt at a time across the whole rotation,
+		// longest-waiting first, separated by RotationPressGapMs. There is no
+		// user setting for this any more - the plugin just tries as fast as the
+		// game can take it and the game decides which attempt lands.
+		double spacing = RotationPressGapMs;
 		DateTime lastActivity = _lastRotationFireUtc;
 		if (_lastHotbarUsageUtc > lastActivity)
 		{
@@ -5268,13 +5255,7 @@ catch { }
 		// Nothing readable from the game, so report the remaining share of the
 		// rotation-wide cast spacing instead of the manual CD(s) estimate - that
 		// estimate is what used to make a held trigger sleep for seconds.
-		double spacing = ((_config != null && _config.CastSpacingMs > 0) ? ((double)_config.CastSpacingMs) : 800.0);
-		// Presses that arrive faster than the game's own global recast are simply
-		// swallowed, so anything under half a second is wasted effort.
-		if (spacing < 500.0)
-		{
-			spacing = 500.0;
-		}
+		double spacing = RotationPressGapMs;
 		DateTime lastActivity = _lastRotationFireUtc;
 		if (_lastHotbarUsageUtc > lastActivity)
 		{
