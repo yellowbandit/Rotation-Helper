@@ -7428,6 +7428,9 @@ catch { }
 			Vector3 value = entity.Location.Position.Value;
 			double num = _config.AutoTargetMaxRange;
 			double num2 = -1.0;
+			_atRejNotEnemy = 0;
+			_atRejDead = 0;
+			_atRejNoPos = 0;
 			IEntity entity2 = null;
 			bool preferByType = _config != null && _config.PreferChampionTargets;
 			double champNum = -1.0;
@@ -7437,7 +7440,7 @@ catch { }
 			{
 				foreach (IEntity item in readOnlyCollection)
 				{
-					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsCountedEnemy(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
+					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || TargetIsRejected(item, entity))
 					{
 						continue;
 					}
@@ -7487,7 +7490,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")}");
+				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}");
 			}
 		}
 		catch
@@ -7512,6 +7515,9 @@ catch { }
 			Vector3 value = entity.Location.Position.Value;
 			double num = _config.AutoTargetMaxRange;
 			double num2 = double.MaxValue;
+			_atRejNotEnemy = 0;
+			_atRejDead = 0;
+			_atRejNoPos = 0;
 			IEntity entity2 = null;
 			bool preferByType = _config != null && _config.PreferChampionTargets;
 			double champNum = double.MaxValue;
@@ -7521,7 +7527,7 @@ catch { }
 			{
 				foreach (IEntity item in readOnlyCollection)
 				{
-					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || !IsCountedEnemy(item) || (item.HitPoints_Current.HasValue && item.HitPoints_Current.Value <= 0))
+					if (item == null || item.InstanceId == 0L || item.InstanceId == entity.InstanceId || TargetIsRejected(item, entity))
 					{
 						continue;
 					}
@@ -7571,7 +7577,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")}");
+				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}");
 			}
 		}
 		catch
@@ -7697,6 +7703,33 @@ catch { }
 		"enchanter", "diviner", "abjurer", "transmuter", "druid", "oracle", "prophet",
 		"seer", "hexer", "archmage", "ritualist", "yuan-ti", "mind flayer", "beholder", "hag"
 	};
+
+		// Counters explaining why auto-target rejected creatures during the last
+	// scan. Diagnostics only - they drive the throttled AUTOTARGET log line so
+	// "picked=none" can be explained instead of guessed at.
+	private int _atRejNotEnemy = 0;
+	private int _atRejDead = 0;
+	private int _atRejNoPos = 0;
+
+	private bool TargetIsRejected(IEntity entity, IEntity self)
+	{
+		if (!IsCountedEnemy(entity))
+		{
+			_atRejNotEnemy++;
+			return true;
+		}
+		if (entity.HitPoints_Current.HasValue && entity.HitPoints_Current.Value <= 0)
+		{
+			_atRejDead++;
+			return true;
+		}
+		if (!(entity.Location?.Position).HasValue)
+		{
+			_atRejNoPos++;
+			return true;
+		}
+		return false;
+	}
 
 	private bool IsChampion(IEntity entity)
 	{
