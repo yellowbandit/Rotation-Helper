@@ -7623,7 +7623,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReport(entity, entity2)}");
+				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReportDetailed(entity, entity2)}");
 			}
 		}
 		catch
@@ -7710,7 +7710,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReport(entity, entity2)}");
+				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReportDetailed(entity, entity2)}");
 			}
 		}
 		catch
@@ -7886,6 +7886,93 @@ catch { }
 		default:
 			return "unknown";
 		}
+	}
+
+	// Rebuilt census. The first version always reported zeros, so instead of
+	// guessing why, every step is now guarded on its own and the result says how
+	// many creatures were actually looked at, plus the first few flags by name.
+	// That way one bad creature can no longer wipe out the whole count.
+	private string VisibilityCensusReportDetailed(IEntity self, IEntity picked)
+	{
+		int num = 0;
+		int num2 = 0;
+		int num3 = 0;
+		int num4 = 0;
+		int num5 = 0;
+		string text = string.Empty;
+		try
+		{
+			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
+			if (readOnlyCollection != null)
+			{
+				Vector3? vector = null;
+				try
+				{
+					vector = (self != null) ? GetEntityWorldPosition(self) : null;
+				}
+				catch
+				{
+					vector = null;
+				}
+				double num6 = (_config != null) ? ((double)_config.AutoTargetMaxRange) : 0.0;
+				foreach (IEntity item in readOnlyCollection)
+				{
+					try
+					{
+						if (item == null || item.InstanceId == 0L)
+						{
+							continue;
+						}
+						if (self != null && item.InstanceId == self.InstanceId)
+						{
+							continue;
+						}
+						if (!IsCountedEnemy(item))
+						{
+							continue;
+						}
+						Vector3? vector2 = item.Location?.Position;
+						if (!vector2.HasValue)
+						{
+							continue;
+						}
+						if (vector.HasValue && num6 > 0.0 && Distance(vector.Value, vector2.Value) > num6)
+						{
+							continue;
+						}
+						num5++;
+						int num7 = ReadEnemyVisibility(item);
+						if (num7 == 3)
+						{
+							num++;
+						}
+						else if (num7 == 1)
+						{
+							num2++;
+						}
+						else if (num7 == 2)
+						{
+							num3++;
+						}
+						else
+						{
+							num4++;
+						}
+						if (num5 <= 8)
+						{
+							text = text + ((text.Length == 0) ? " near: " : ", ") + item.Name + "=" + VisibilityName(num7);
+						}
+					}
+					catch
+					{
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return string.Concat(" vis: picked=", VisibilityName(ReadEnemyVisibility(picked)), " visible=", num, " invisible=", num2, " concealed=", num3, " unknown=", num4, " examined=", num5, text);
 	}
 
 	private string VisibilityCensusReport(IEntity self, IEntity picked)
