@@ -7934,7 +7934,7 @@ catch { }
 							continue;
 						}
 						num8++;
-						Vector3? vector2 = item.Location?.Position;
+				Vector3? vector2 = GetEntityWorldPosition(item);
 						if (!vector2.HasValue)
 						{
 							continue;
