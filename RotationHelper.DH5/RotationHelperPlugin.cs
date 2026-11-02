@@ -7544,6 +7544,68 @@ catch { }
 		return IsInMeleeRange(out distance);
 	}
 
+	// Sticky targeting. Once a hostile is selected, keep it until it is really
+	// gone: dead, deleted, no longer an enemy, or further away than the search
+	// range. The game exposes no line of sight information, so switching away
+	// from a fight that is already running only ever costs casts. This is a
+	// switching rule only - it never claims to know about walls.
+	private bool KeepCurrentTarget(IEntity self, Vector3 selfPos, double maxRange, string label)
+	{
+		try
+		{
+			ulong? selectedId = _gameDataProvider?.GetSelectedObjectId();
+			if (selectedId.HasValue && selectedId.Value != 0L)
+			{
+				IEntity current = null;
+				IEntity tracked = _selectedObject;
+				if (tracked != null && tracked.InstanceId == selectedId.Value)
+				{
+					current = tracked;
+				}
+				else
+				{
+					IReadOnlyCollection<IEntity> source = _entities;
+					if (source != null)
+					{
+						foreach (IEntity item in source)
+						{
+							if (item != null && item.InstanceId == selectedId.Value)
+							{
+								current = item;
+								break;
+							}
+						}
+					}
+				}
+				if (current != null && current.InstanceId != 0L && (self == null || current.InstanceId != self.InstanceId) && IsCountedEnemy(current))
+				{
+					bool dead = current.HitPoints_Current.HasValue && current.HitPoints_Current.Value <= 0;
+					if (!dead)
+					{
+						Vector3? currentPos = current.Location?.Position;
+						if (currentPos.HasValue)
+						{
+							double distance2 = Distance(selfPos, currentPos.Value);
+							if (!(maxRange > 0.0) || !(distance2 > maxRange))
+							{
+								if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
+								{
+									_lastAutoTargetDiagLogTime = DateTime.UtcNow;
+									Log($"AUTOTARGET [{label}] keep: '{current.Name}' id={current.InstanceId} dist={distance2:F1} still usable, not switching");
+								}
+								return true;
+							}
+						}
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return false;
+	}
+
 	internal void AutoTargetFurthestEnemy()
 	{
 		try
@@ -7561,6 +7623,10 @@ catch { }
 			Vector3 value = entity.Location.Position.Value;
 			double num = _config.AutoTargetMaxRange;
 			double num2 = -1.0;
+			if (KeepCurrentTarget(entity, value, num, "furthest"))
+			{
+				return;
+			}
 			_atRejNotEnemy = 0;
 			_atRejDead = 0;
 			_atRejNoPos = 0;
@@ -7648,6 +7714,10 @@ catch { }
 			Vector3 value = entity.Location.Position.Value;
 			double num = _config.AutoTargetMaxRange;
 			double num2 = double.MaxValue;
+			if (KeepCurrentTarget(entity, value, num, "closest"))
+			{
+				return;
+			}
 			_atRejNotEnemy = 0;
 			_atRejDead = 0;
 			_atRejNoPos = 0;
