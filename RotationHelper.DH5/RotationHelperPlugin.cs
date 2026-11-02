@@ -5022,6 +5022,17 @@ catch { }
 		if (remaining > _pendingPressBaseRemaining + 0.6)
 		{
 			_pressLandedCount++;
+			// A landed cast just started this ability's own cooldown, so its
+			// ready time minus that cooldown is what the game clock reads right
+			// now. That is the most accurate clock sample available, and taking
+			// one after every landed cast keeps the "time left" readings honest
+			// instead of running many seconds high.
+			double landedCooldownSeconds = (pending.CooldownMs > 0) ? (pending.CooldownMs / 1000.0) : 0.0;
+			if (landedCooldownSeconds > 0.5)
+			{
+				double rawAtLanding = remaining + EstimatedGameClock();
+				AnchorGameClock(rawAtLanding - landedCooldownSeconds);
+			}
 			_adaptivePressGapMs -= 100.0;
 			if (_adaptivePressGapMs < RotationPressGapMs)
 			{
@@ -5034,6 +5045,10 @@ catch { }
 		if ((utcNow - _pendingPressUtc).TotalMilliseconds >= 900.0)
 		{
 			_pressDroppedCount++;
+			// A refused press only means "not yet" - the game was still busy.
+			// Put the ability back near the front of the queue so it gets the
+			// next attempt instead of sitting behind everything else.
+			pending.LastFired = utcNow - TimeSpan.FromMilliseconds(600.0);
 			_adaptivePressGapMs += 150.0;
 			if (_adaptivePressGapMs > 1400.0)
 			{
@@ -5173,6 +5188,14 @@ catch { }
 		return _gameClockAnchorValue + (DateTime.UtcNow - _gameClockAnchorUtc).TotalSeconds;
 	}
 
+	// The clock estimate is only worth trusting for a short while after a real
+	// sample of it, such as the one taken from a landed cast. Outside that
+	// window the "time left" numbers drift and must not decide anything.
+	private bool GameClockIsFresh(double maxAgeSeconds)
+	{
+		return _gameClockAnchorValue > 0.0 && _gameClockAnchorUtc != DateTime.MinValue && (DateTime.UtcNow - _gameClockAnchorUtc).TotalSeconds <= maxAgeSeconds;
+	}
+
 	private bool IsOnCooldownForAutocast(RotationAbility ability)
 	{
 		if (ability == null)
@@ -5222,6 +5245,23 @@ catch { }
 			// pending request before the game performs it, so wait until it has
 			// either landed or been written off.
 			return true;
+		}
+		// If this ability's own timer still shows it recovering, do not spend a
+		// press on it - the game would only refuse it and that press is lost.
+		// This relies on a freshly sampled clock; when the clock is stale, or
+		// when the reading claims an impossibly long wait, it is ignored so an
+		// ability can never be locked out.
+		if (GameClockIsFresh(4.0))
+		{
+			double remainingForGate;
+			if (TryReadAbilityRemaining(ability, out remainingForGate))
+			{
+				double gateCap = ((ability.CooldownMs > 0) ? (ability.CooldownMs / 1000.0) : 10.0) + 5.0;
+				if (remainingForGate > 0.35 && remainingForGate <= gateCap)
+				{
+					return true;
+				}
+			}
 		}
 		double spacing = _adaptivePressGapMs;
 		DateTime lastActivity = _lastRotationFireUtc;
