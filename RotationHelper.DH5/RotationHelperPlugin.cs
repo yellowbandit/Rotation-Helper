@@ -7623,7 +7623,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReportDetailed(entity, entity2)}");
+				Log($"AUTOTARGET [furthest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReportDetailed(entity, entity2, readOnlyCollection)}");
 			}
 		}
 		catch
@@ -7710,7 +7710,7 @@ catch { }
 			if ((DateTime.UtcNow - _lastAutoTargetDiagLogTime).TotalSeconds >= 2.0)
 			{
 				_lastAutoTargetDiagLogTime = DateTime.UtcNow;
-				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReportDetailed(entity, entity2)}");
+				Log($"AUTOTARGET [closest] OK: scanned={((readOnlyCollection != null) ? readOnlyCollection.Count : 0)} picked={(entity2 == null ? "none" : "'" + entity2.Name + "' id=" + entity2.InstanceId + " dist=" + num2.ToString("F1"))} maxRange={num.ToString("F1")} rej: notEnemy={_atRejNotEnemy} dead={_atRejDead} noPos={_atRejNoPos}{VisibilityCensusReportDetailed(entity, entity2, readOnlyCollection)}");
 			}
 		}
 		catch
@@ -7892,7 +7892,7 @@ catch { }
 	// guessing why, every step is now guarded on its own and the result says how
 	// many creatures were actually looked at, plus the first few flags by name.
 	// That way one bad creature can no longer wipe out the whole count.
-	private string VisibilityCensusReportDetailed(IEntity self, IEntity picked)
+	private string VisibilityCensusReportDetailed(IEntity self, IEntity picked, IReadOnlyCollection<IEntity> source)
 	{
 		int num = 0;
 		int num2 = 0;
@@ -7902,7 +7902,7 @@ catch { }
 		string text = string.Empty;
 		try
 		{
-			IReadOnlyCollection<IEntity> readOnlyCollection = _entities;
+			IReadOnlyCollection<IEntity> readOnlyCollection = ((source != null) ? source : _entities);
 			if (readOnlyCollection != null)
 			{
 				Vector3? vector = null;
