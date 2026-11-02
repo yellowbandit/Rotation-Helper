@@ -3554,6 +3554,21 @@ catch { }
 	// Used together with _lastHotbarUsageUtc to space presses out to roughly the
 	// game's own global recast instead of hammering it.
 	private const double RotationPressGapMs = 300.0;
+
+	// Press verification. InvokeHotbar only queues a request that the game
+	// carries out on a later frame, so pressing again while one is still
+	// pending can replace it and the cast never happens. After every press the
+	// plugin therefore watches that ability's own cooldown timer: if it starts
+	// counting down, the cast really happened; if nothing changes, the press
+	// was thrown away. The gap between presses then tunes itself to whatever
+	// the game is actually accepting.
+	private RotationAbility _pendingPressAbility = null;
+	private DateTime _pendingPressUtc = DateTime.MinValue;
+	private double _pendingPressBaseRemaining = 0.0;
+	private double _adaptivePressGapMs = 300.0;
+	private int _pressLandedCount = 0;
+	private int _pressDroppedCount = 0;
+	private DateTime _lastPressStatsUtc = DateTime.MinValue;
 	private DateTime _lastRotationFireUtc = DateTime.MinValue;
 
 	// Learned per-ability cooldown state, read straight from the ability's own
@@ -4945,6 +4960,96 @@ catch { }
 	// Some timer properties are absolute timestamps that are never zero. In that
 	// case SeenZero never becomes true and the ability is never treated as
 	// cooling, so behaviour is exactly what it was before this check existed.
+	private bool TryReadAbilityRemaining(RotationAbility ability, out double remainingSeconds)
+	{
+		remainingSeconds = 0.0;
+		if (ability == null)
+		{
+			return false;
+		}
+		uint did = ability.CooldownTimerDid2;
+		if (did == 0u || did == GameTimeDid)
+		{
+			return false;
+		}
+		IEntity current = _currentEntity;
+		if (current == null)
+		{
+			return false;
+		}
+		double raw;
+		try
+		{
+			IProperty property = current.GetProperty(did);
+			if (property?.Value == null)
+			{
+				return false;
+			}
+			raw = Convert.ToDouble(property.Value);
+		}
+		catch
+		{
+			return false;
+		}
+		double nowEstimate = EstimatedGameClock();
+		if (nowEstimate <= 0.0)
+		{
+			AnchorGameClock(raw);
+			return false;
+		}
+		remainingSeconds = raw - nowEstimate;
+		return true;
+	}
+
+	// Called every tick. Decides whether the last press actually became a cast.
+	// A landed cast starts that ability's own cooldown, so the cooldown it shows
+	// jumps up. A swallowed press leaves it untouched. Verified presses let the
+	// gap between presses shrink; swallowed ones widen it, so the plugin settles
+	// on the fastest rate the game really accepts instead of hammering.
+	private void ResolvePendingPressLanding(DateTime utcNow)
+	{
+		RotationAbility pending = _pendingPressAbility;
+		if (pending == null)
+		{
+			return;
+		}
+		double remaining;
+		if (!TryReadAbilityRemaining(pending, out remaining))
+		{
+			_pendingPressAbility = null;
+			return;
+		}
+		if (remaining > _pendingPressBaseRemaining + 0.6)
+		{
+			_pressLandedCount++;
+			_adaptivePressGapMs -= 100.0;
+			if (_adaptivePressGapMs < RotationPressGapMs)
+			{
+				_adaptivePressGapMs = RotationPressGapMs;
+			}
+			Log($"PRESS LANDED {pending.Name} (cooldown now {remaining:F1}s, gap {_adaptivePressGapMs:F0}ms)");
+			_pendingPressAbility = null;
+			return;
+		}
+		if ((utcNow - _pendingPressUtc).TotalMilliseconds >= 900.0)
+		{
+			_pressDroppedCount++;
+			_adaptivePressGapMs += 150.0;
+			if (_adaptivePressGapMs > 1400.0)
+			{
+				_adaptivePressGapMs = 1400.0;
+			}
+			Log($"PRESS DROPPED {pending.Name} (nothing cast, gap {_adaptivePressGapMs:F0}ms)");
+			_pendingPressAbility = null;
+			return;
+		}
+		if ((utcNow - _lastPressStatsUtc).TotalSeconds >= 30.0)
+		{
+			_lastPressStatsUtc = utcNow;
+			Log($"PRESS STATS landed={_pressLandedCount} dropped={_pressDroppedCount} gap={_adaptivePressGapMs:F0}ms");
+		}
+	}
+
 	private bool AbilityTimerSaysCooling(RotationAbility ability)
 	{
 		if (ability == null || !ability.ReferenceDid.HasValue)
@@ -5111,7 +5216,14 @@ catch { }
 		// longest-waiting first, separated by RotationPressGapMs. There is no
 		// user setting for this any more - the plugin just tries as fast as the
 		// game can take it and the game decides which attempt lands.
-		double spacing = RotationPressGapMs;
+		if (_pendingPressAbility != null)
+		{
+			// A press is still unconfirmed. Pressing again now could replace the
+			// pending request before the game performs it, so wait until it has
+			// either landed or been written off.
+			return true;
+		}
+		double spacing = _adaptivePressGapMs;
 		DateTime lastActivity = _lastRotationFireUtc;
 		if (_lastHotbarUsageUtc > lastActivity)
 		{
@@ -5255,7 +5367,7 @@ catch { }
 		// Nothing readable from the game, so report the remaining share of the
 		// rotation-wide cast spacing instead of the manual CD(s) estimate - that
 		// estimate is what used to make a held trigger sleep for seconds.
-		double spacing = RotationPressGapMs;
+		double spacing = _adaptivePressGapMs;
 		DateTime lastActivity = _lastRotationFireUtc;
 		if (_lastHotbarUsageUtc > lastActivity)
 		{
@@ -6320,6 +6432,7 @@ catch { }
 		try
 		{
 			DateTime utcNow = DateTime.UtcNow;
+			ResolvePendingPressLanding(utcNow);
 			AutoLoadCharacterProfileIfChanged();
 			CheckAutoAttack();
 			if (ToggleBuffs.Count > 0)
@@ -6924,6 +7037,10 @@ catch { }
 				{
 					rotationAbility6.LastFired = DateTime.UtcNow;
 					_lastRotationFireUtc = DateTime.UtcNow;
+					double pressBaseline;
+					_pendingPressBaseRemaining = TryReadAbilityRemaining(rotationAbility6, out pressBaseline) ? pressBaseline : 0.0;
+					_pendingPressAbility = rotationAbility6;
+					_pendingPressUtc = DateTime.UtcNow;
 					Log("AUTOCAST [" + rotationAbility6.KeyLabel + "] " + rotationAbility6.Name);
 				}
 			}
