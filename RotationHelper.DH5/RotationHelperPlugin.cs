@@ -7899,6 +7899,8 @@ catch { }
 		int num3 = 0;
 		int num4 = 0;
 		int num5 = 0;
+		int num8 = 0;
+		int num9 = 0;
 		string text = string.Empty;
 		try
 		{
@@ -7931,6 +7933,7 @@ catch { }
 						{
 							continue;
 						}
+						num8++;
 						Vector3? vector2 = item.Location?.Position;
 						if (!vector2.HasValue)
 						{
@@ -7965,6 +7968,7 @@ catch { }
 					}
 					catch
 					{
+						num9++;
 					}
 				}
 			}
@@ -7972,7 +7976,7 @@ catch { }
 		catch
 		{
 		}
-		return string.Concat(" vis: picked=", VisibilityName(ReadEnemyVisibility(picked)), " visible=", num, " invisible=", num2, " concealed=", num3, " unknown=", num4, " examined=", num5, text);
+		return string.Concat(" vis: picked=", VisibilityName(ReadEnemyVisibility(picked)), " visible=", num, " invisible=", num2, " concealed=", num3, " unknown=", num4, " examined=", num5, " src=", ((source != null) ? source.Count : -1), " counted=", num8, " threw=", num9, " cens=v3", text);
 	}
 
 	private string VisibilityCensusReport(IEntity self, IEntity picked)
