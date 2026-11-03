@@ -7958,6 +7958,140 @@ catch { }
 		}
 	}
 
+	// Diagnostic only. Other Dungeon Helper plugins decide "who is this creature
+	// already fighting" from these AI properties. Every name below states its own
+	// meaning, so nothing here is invented:
+	//   AI_NPC_m_iidCurrentTarget - instance id of whoever this creature is
+	//                               currently attacking
+	//   AI_NPC_m_bIsInCombat      - 1 while this creature is in combat
+	//   NPC_IsAttacking           - 1 while this creature is attacking
+	//   AI_AttackState            - numeric AI attack state
+	// Nothing is filtered on these yet. This line only reports what the game
+	// actually returns, so the next change can be based on measured values.
+	private static readonly uint AiCurrentTargetDid = 268451949u;
+	private static readonly uint AiNpcIsInCombatDid = 268458597u;
+	private static readonly uint NpcIsAttackingDid = 268437558u;
+	private static readonly uint AiAttackStateDid = 268439566u;
+	private DateTime _lastEngagementLogTime = DateTime.MinValue;
+
+	private string DescribeEngagement(IEntity item)
+	{
+		try
+		{
+			if (item == null)
+			{
+				return "null";
+			}
+			long? num = ReadPropertyLong(item.GetProperty(AiCurrentTargetDid));
+			long? num2 = ReadPropertyLong(item.GetProperty(AiNpcIsInCombatDid));
+			long? num3 = ReadPropertyLong(item.GetProperty(NpcIsAttackingDid));
+			long? num4 = ReadPropertyLong(item.GetProperty(AiAttackStateDid));
+			return "c=" + (num.HasValue ? num.Value.ToString() : "?") + ",b=" + (num2.HasValue ? num2.Value.ToString() : "?") + ",a=" + (num3.HasValue ? num3.Value.ToString() : "?") + ",s=" + (num4.HasValue ? num4.Value.ToString() : "?");
+		}
+		catch
+		{
+			return "threw";
+		}
+	}
+
+	// Reported on its own line so the visibility census line stays exactly as it
+	// is. Counts how many nearby creatures say they are in combat / attacking and
+	// what their current AI target is, plus the first few by name.
+	private string EngagementCensusReport(IEntity self, IReadOnlyCollection<IEntity> source)
+	{
+		int num = 0;
+		int num2 = 0;
+		int num3 = 0;
+		int num4 = 0;
+		int num5 = 0;
+		int num6 = 0;
+		int num7 = 0;
+		string text = string.Empty;
+		try
+		{
+			IReadOnlyCollection<IEntity> readOnlyCollection = ((source != null) ? source : _entities);
+			if (readOnlyCollection != null)
+			{
+				Vector3? vector = null;
+				try
+				{
+					vector = (self != null) ? GetEntityWorldPosition(self) : null;
+				}
+				catch
+				{
+					vector = null;
+				}
+				double num8 = (_config != null) ? ((double)_config.AutoTargetMaxRange) : 0.0;
+				foreach (IEntity item in readOnlyCollection)
+				{
+					try
+					{
+						if (item == null || item.InstanceId == 0L)
+						{
+							continue;
+						}
+						if (self != null && item.InstanceId == self.InstanceId)
+						{
+							continue;
+						}
+						if (!IsCountedEnemy(item))
+						{
+							continue;
+						}
+						Vector3? vector2 = GetEntityWorldPosition(item);
+						if (!vector2.HasValue)
+						{
+							continue;
+						}
+						if (vector.HasValue && num8 > 0.0 && Distance(vector.Value, vector2.Value) > num8)
+						{
+							continue;
+						}
+						num4++;
+						long? num9 = ReadPropertyLong(item.GetProperty(AiCurrentTargetDid));
+						if (num9.HasValue && num9.Value != 0L)
+						{
+							if (self != null && (ulong)num9.Value == self.InstanceId)
+							{
+								num++;
+							}
+							else
+							{
+								num2++;
+							}
+						}
+						else
+						{
+							num3++;
+						}
+						long? num10 = ReadPropertyLong(item.GetProperty(AiNpcIsInCombatDid));
+						if (num10.HasValue && num10.Value != 0L)
+						{
+							num5++;
+						}
+						long? num11 = ReadPropertyLong(item.GetProperty(NpcIsAttackingDid));
+						if (num11.HasValue && num11.Value != 0L)
+						{
+							num6++;
+						}
+						if (num4 <= 8)
+						{
+							text = text + ((text.Length == 0) ? " near: " : ", ") + item.Name + "(" + DescribeEngagement(item) + ")";
+						}
+					}
+					catch
+					{
+						num7++;
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return ", examined=" + num4 + " onUs=" + num + " onOther=" + num2 + " none=" + num3 + " combat=" + num5 + " attacking=" + num6 + " threw=" + num7 + " selfId=" + ((self != null) ? self.InstanceId.ToString() : "?") + text;
+	}
+
 	// Rebuilt census. The first version always reported zeros, so instead of
 	// guessing why, every step is now guarded on its own and the result says how
 	// many creatures were actually looked at, plus the first few flags by name.
@@ -8045,6 +8179,11 @@ catch { }
 		}
 		catch
 		{
+		}
+		if ((DateTime.UtcNow - _lastEngagementLogTime).TotalSeconds >= 2.0)
+		{
+			_lastEngagementLogTime = DateTime.UtcNow;
+			Log("AUTOTARGET ENGAGE:" + EngagementCensusReport(self, source));
 		}
 		return string.Concat(" vis: picked=", VisibilityName(ReadEnemyVisibility(picked)), " visible=", num, " invisible=", num2, " concealed=", num3, " unknown=", num4, " examined=", num5, " src=", ((source != null) ? source.Count : -1), " counted=", num8, " threw=", num9, " cens=v3", text);
 	}
