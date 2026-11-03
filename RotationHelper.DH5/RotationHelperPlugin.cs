@@ -7974,6 +7974,123 @@ catch { }
 	private static readonly uint AiAttackStateDid = 268439566u;
 	private DateTime _lastEngagementLogTime = DateTime.MinValue;
 
+	private DateTime _lastPropertyDumpTime = DateTime.MinValue;
+
+	private string DescribePropertyValue(IProperty property)
+	{
+		try
+		{
+			if (property == null)
+			{
+				return "null";
+			}
+			object value = property.Value;
+			if (value == null)
+			{
+				return "null";
+			}
+			string text = value as string;
+			if (text != null)
+			{
+				return "\"" + (text.Length > 60 ? text.Substring(0, 60) + "..." : text) + "\"";
+			}
+			if (value is IConvertible)
+			{
+				return Convert.ToString(value);
+			}
+			return "<" + value.GetType().Name + ">";
+		}
+		catch
+		{
+			return "?";
+		}
+	}
+
+	private void DumpEntityProperties(IEntity self, IReadOnlyCollection<IEntity> source)
+	{
+		try
+		{
+			if ((DateTime.UtcNow - _lastPropertyDumpTime).TotalSeconds < 20.0)
+			{
+				return;
+			}
+			_lastPropertyDumpTime = DateTime.UtcNow;
+			IEntity target = null;
+			IEntity tracked = _selectedObject;
+			if (tracked != null && tracked.InstanceId != 0L && IsCountedEnemy(tracked) && (self == null || tracked.InstanceId != self.InstanceId))
+			{
+				target = tracked;
+			}
+			if (target == null && source != null)
+			{
+				foreach (IEntity item in source)
+				{
+					if (item == null || item.InstanceId == 0L || (self != null && item.InstanceId == self.InstanceId))
+					{
+						continue;
+					}
+					if (!IsCountedEnemy(item))
+					{
+						continue;
+					}
+					target = item;
+					break;
+				}
+			}
+			if (target == null)
+			{
+				return;
+			}
+			IPropertyCollection collection = target.GetCombinedPropertyCollection();
+			if (collection == null)
+			{
+				return;
+			}
+			IReadOnlyList<IProperty> properties = collection.Properties;
+			if (properties == null)
+			{
+				return;
+			}
+			ulong selfId = (self != null) ? self.InstanceId : 0L;
+			string selfText = (selfId != 0L) ? selfId.ToString() : null;
+			Log($"AUTOTARGET PROPDUMP '{target.Name}' id={target.InstanceId} count={properties.Count} selfId={selfId}");
+			int dumped = 0;
+			foreach (IProperty property in properties)
+			{
+				if (property == null)
+				{
+					continue;
+				}
+				if (dumped >= 400)
+				{
+					Log("  PROP ... truncated at 400");
+					break;
+				}
+				dumped++;
+				uint did = property.PropertyId;
+				string name;
+				try
+				{
+					name = _gameDataProvider?.PropertyMaster?.GetSafePropertyName(did);
+				}
+				catch
+				{
+					name = null;
+				}
+				string text = DescribePropertyValue(property);
+				string flag = "";
+				if (!string.IsNullOrEmpty(selfText) && text != null && text.Contains(selfText))
+				{
+					flag = " <<< SELF";
+				}
+				Log($"  PROP 0x{did:X8} {did} {name} = {text}{flag}");
+			}
+		}
+		catch
+		{
+		}
+	}
+
 	private string DescribeEngagement(IEntity item)
 	{
 		try
@@ -8185,6 +8302,7 @@ catch { }
 			_lastEngagementLogTime = DateTime.UtcNow;
 			Log("AUTOTARGET ENGAGE:" + EngagementCensusReport(self, source));
 		}
+		DumpEntityProperties(self, source);
 		return string.Concat(" vis: picked=", VisibilityName(ReadEnemyVisibility(picked)), " visible=", num, " invisible=", num2, " concealed=", num3, " unknown=", num4, " examined=", num5, " src=", ((source != null) ? source.Count : -1), " counted=", num8, " threw=", num9, " cens=v3", text);
 	}
 
