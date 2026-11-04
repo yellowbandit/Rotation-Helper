@@ -6937,6 +6937,9 @@ catch { }
 					AutoTargetClosestEnemy();
 				}
 			}
+			// Measuring what a monster actually publishes must not depend on
+			// auto-targeting being switched on. The dump has its own throttle.
+			DumpEntityProperties(_currentEntity, _entities);
 			if (Rotation.Count > 0)
 			{
 				bool flag4 = _config?.AutocastRotationOnTarget ?? false;
@@ -8039,6 +8042,7 @@ catch { }
 			}
 			if (target == null)
 			{
+				_lastPropertyDumpTime = DateTime.UtcNow.AddSeconds(-15.0);
 				return;
 			}
 			IPropertyCollection collection = target.GetCombinedPropertyCollection();
